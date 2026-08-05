@@ -112,7 +112,7 @@ class ProximityFeedback(private val context: Context) {
                     continue
                 }
                 if (soundEnabled) click(pitchHz)
-                if (hapticsEnabled) buzz()
+                if (hapticsEnabled) buzz(interval)
                 delay(interval.toLong())
             }
             release()
@@ -157,22 +157,40 @@ class ProximityFeedback(private val context: Context) {
         }
     }
 
-    private fun buzz() {
+    /**
+     * One pulse.
+     *
+     * ## Duration is the only control here
+     *
+     * No `VibrationAttributes` is passed deliberately, so the pulse is filed as
+     * `USAGE_TOUCH` and obeys the system's haptic-feedback setting. Declaring
+     * `USAGE_ALARM` would make it fire regardless — but that setting is the user
+     * saying they do not want the phone buzzing at them, and a finder is not
+     * entitled to overrule it. The UI explains the dependency instead.
+     *
+     * That suppression is otherwise invisible: Android dispatches the
+     * vibration, logs it, and discards it with
+     * `status: ignored_for_settings, scale: 0.00`, so the feature looks broken
+     * while working perfectly.
+     *
+     * Length matters more than it looks. Devices reporting no
+     * `AMPLITUDE_CONTROL` — including the one this was tested on — ignore the
+     * amplitude entirely, and a rotary motor needs tens of milliseconds merely
+     * to spin up. At 22 ms it never got moving. The pulse now scales with the
+     * gap so it stays a pulse rather than a drone, except at arm's reach where
+     * near-continuous is exactly the right sensation.
+     */
+    private fun buzz(intervalMs: Int) {
         val v = vibrator ?: return
+        val duration = (intervalMs * 0.6).toLong().coerceIn(40L, 90L)
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Short and light: this fires several times a second at close
-                // range, and a heavy pulse at that rate is unpleasant and drains
-                // the battery noticeably.
                 v.vibrate(
-                    VibrationEffect.createOneShot(
-                        22,
-                        VibrationEffect.DEFAULT_AMPLITUDE,
-                    )
+                    VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE)
                 )
             } else {
                 @Suppress("DEPRECATION")
-                v.vibrate(18)
+                v.vibrate(duration)
             }
         }
     }

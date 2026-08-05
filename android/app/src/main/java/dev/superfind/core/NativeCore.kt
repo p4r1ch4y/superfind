@@ -132,6 +132,30 @@ object NativeCore {
         farDbm: Double,
     ): DoubleArray?
 
+    // ---- Co-travel -------------------------------------------------------
+    //
+    // App-lifetime, not hunt-lifetime: the signal is persistence across places,
+    // which a watch recreated per hunt could never observe.
+
+    external fun createFollowWatch(): Long
+
+    external fun destroyFollowWatch(handle: Long)
+
+    /** Record that [key] was heard while the user was at `(x, y)`. */
+    external fun observeSighting(
+        handle: Long,
+        key: String,
+        atSeconds: Double,
+        x: Double,
+        y: Double,
+    )
+
+    /** Addresses that have travelled with the user, newline-separated. */
+    external fun followers(handle: Long): String?
+
+    /** Forget sightings older than [horizonSeconds]. */
+    external fun pruneSightings(handle: Long, nowSeconds: Double, horizonSeconds: Double)
+
     // ---- Altitude ----------------------------------------------------------
     //
     // A handle of its own rather than a field on the tracker: pressure readings

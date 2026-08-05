@@ -58,6 +58,8 @@ fun SurveyScreen(
     instruction: String,
     limitations: List<String>,
     error: String?,
+    /** Addresses that have been with the user across places they have moved. */
+    followers: List<String> = emptyList(),
     onSelect: (Sighting) -> Unit,
     onHuntAddress: (String) -> Boolean,
     modifier: Modifier = Modifier,
@@ -100,6 +102,11 @@ fun SurveyScreen(
                     color = SuperfindColors.Farthest,
                 )
             }
+        }
+
+        if (followers.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            TravelledWithYou(followers)
         }
 
         Spacer(Modifier.height(12.dp))
@@ -185,6 +192,56 @@ private fun AddressEntry(onHuntAddress: (String) -> Boolean) {
                 TextButton(onClick = { expanded = false; text = "" }) { Text("Cancel") }
                 TextButton(enabled = valid, onClick = { onHuntAddress(text) }) { Text("Hunt") }
             }
+        }
+    }
+}
+
+/**
+ * Devices that have kept pace with you.
+ *
+ * The wording is the careful part. This detects **co-travel**, which is not
+ * proof of anything: a partner's phone, a colleague on the same train and a
+ * tracker in your bag are indistinguishable by radio. Saying "you are being
+ * tracked" would be a claim the evidence cannot support, and one that invites
+ * somebody to search their own belongings and distrust the people around them.
+ *
+ * So it states the observation and stops. What to make of it is the user's.
+ */
+@Composable
+private fun TravelledWithYou(followers: List<String>) {
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = SuperfindColors.Mid.copy(alpha = 0.13f),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                text = if (followers.size == 1) {
+                    "A device has been with you across places"
+                } else {
+                    "${followers.size} devices have been with you across places"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = SuperfindColors.Mid,
+            )
+            Spacer(Modifier.height(4.dp))
+            followers.take(4).forEach {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "This means it stayed nearby as you moved — not that it is " +
+                    "following you. Your own devices, and anyone travelling with " +
+                    "you, look exactly the same from here.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

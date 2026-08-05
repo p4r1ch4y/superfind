@@ -78,10 +78,20 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
 
     val capabilities: Capabilities = Capabilities.detect(app)
 
+
     private val scanner = BleScanner(app)
     private val known = KnownDevices(app)
     private val gatt = GattLink(app)
     private val feedback = ProximityFeedback(app)
+    private val settings = Settings(app)
+
+    init {
+        // Apply the restored choices to the player, not merely to the UI state —
+        // otherwise the chips would read "on" while nothing made a sound.
+        feedback.soundEnabled = settings.soundEnabled
+        feedback.hapticsEnabled = settings.hapticsEnabled
+        feedback.volume = settings.volume
+    }
 
     /**
      * Lives for the whole app, not for one hunt.
@@ -95,6 +105,19 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         else 0L
 
     /** Where this device is in a shared frame, when hunting with others. */
+    /**
+     * Devices that have been travelling with the user.
+     *
+     * Lives as long as the app: the whole signal is persistence across places
+     * you have moved between, so a watch recreated per hunt could never see one.
+     */
+    private val followWatch: Long =
+        if (NativeCore.available) runCatching { NativeCore.createFollowWatch() }.getOrDefault(0L)
+        else 0L
+
+    private val _followers = MutableStateFlow<List<String>>(emptyList())
+    val followers: StateFlow<List<String>> = _followers.asStateFlow()
+
     private var peerLink: PeerLink? = null
     private var peerPosition: Pair<Double, Double>? = null
     private val sensors = MotionSensors(app, capabilities.compassSource, capabilities.stepSource)
@@ -125,25 +148,31 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     val hasBarometer: Boolean get() = sensors.hasBarometer
     val hasHaptics: Boolean get() = feedback.hasHaptics
 
-    private val _soundEnabled = MutableStateFlow(false)
+    // Restored from the last session. A phone hunting in a pocket is exactly
+    // where the process gets killed and relaunched, so losing the choice would
+    // happen at the moment it mattered most.
+    private val _soundEnabled = MutableStateFlow(settings.soundEnabled)
     val soundEnabled: StateFlow<Boolean> = _soundEnabled.asStateFlow()
 
-    private val _hapticsEnabled = MutableStateFlow(false)
+    private val _hapticsEnabled = MutableStateFlow(settings.hapticsEnabled)
     val hapticsEnabled: StateFlow<Boolean> = _hapticsEnabled.asStateFlow()
 
     /** Amplitude, 0 to 1. Defaults loud; see [ProximityFeedback.volume]. */
     fun setVolume(volume: Double) {
         feedback.volume = volume
+        settings.volume = volume
     }
 
     fun setSound(on: Boolean) {
         _soundEnabled.value = on
         feedback.soundEnabled = on
+        settings.soundEnabled = on
     }
 
     fun setHaptics(on: Boolean) {
         _hapticsEnabled.value = on
         feedback.hapticsEnabled = on
+        settings.hapticsEnabled = on
     }
 
     private var tracker: Tracker? = null
@@ -219,6 +248,24 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     publish()
                 }
+        }
+
+        // Refresh the co-travel list alongside the survey, and forget anything
+        // older than a day so a device you have simply owned for a long time is
+        // not incriminated by yesterday's journey.
+        if (followWatch != 0L) {
+            viewModelScope.launch {
+                while (true) {
+                    val now = BleScanner.now()
+                    NativeCore.pruneSightings(followWatch, now, 24.0 * 3600.0)
+                    _followers.value = runCatching { NativeCore.followers(followWatch) }
+                        .getOrNull()
+                        ?.split("\n")
+                        ?.filter { it.isNotBlank() }
+                        .orEmpty()
+                    delay(15_000)
+                }
+            }
         }
 
         // Show what is already known immediately, rather than an empty list
@@ -426,6 +473,7 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         stopAll()
         feedback.stop()
         if (altimeter != 0L) runCatching { NativeCore.destroyAltimeter(altimeter) }
+        if (followWatch != 0L) runCatching { NativeCore.destroyFollowWatch(followWatch) }
         super.onCleared()
     }
 

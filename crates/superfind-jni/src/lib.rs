@@ -24,12 +24,14 @@
 //! `NaN` is used as the null marker throughout, since every real field here is a
 //! finite measurement.
 
-use jni::objects::JClass;
-use jni::sys::{jboolean, jdouble, jdoubleArray, jint, jlong, JNI_FALSE, JNI_TRUE};
+use std::borrow::Cow;
+
+use jni::objects::{JClass, JString};
+use jni::sys::{jboolean, jdouble, jdoubleArray, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
 use superfind_core::{
-    Altimeter, FeedbackConfig, FloorDelta, Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource,
+    Altimeter, FeedbackConfig, FloorDelta, FollowWatch, Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource,
     ProximityCue, Snapshot, Timestamp, Tracker, TrackerConfig, Trend,
 };
 
@@ -415,6 +417,105 @@ fn trend_ordinal(t: Trend) -> f64 {
         Trend::Steady => 2.0,
         Trend::Unknown => 3.0,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Co-travel detection
+// ---------------------------------------------------------------------------
+//
+// App-lifetime, not hunt-lifetime: the whole signal is persistence across
+// places, so a watch recreated per hunt could never observe one.
+
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_createFollowWatch(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    Box::into_raw(Box::new(FollowWatch::default())) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_destroyFollowWatch(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        drop(unsafe { Box::from_raw(handle as *mut FollowWatch) });
+    }
+}
+
+/// Record that `key` was heard while the user was at `(x, y)`.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_observeSighting(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    key: JString,
+    at_seconds: jdouble,
+    x: jdouble,
+    y: jdouble,
+) {
+    let Some(watch) = (unsafe { follow_watch(handle) }) else {
+        return;
+    };
+    let Ok(key) = env.get_string(&key) else {
+        return;
+    };
+    watch.observe(
+        &Cow::from(&key),
+        Timestamp(at_seconds),
+        Point2::new(x, y),
+    );
+}
+
+/// Addresses that have travelled with the user, newline-separated.
+///
+/// A single string rather than an array of objects: the list is short, read
+/// rarely, and one crossing beats constructing a Java array of strings.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_followers(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let joined = match unsafe { follow_watch(handle) } {
+        None => String::new(),
+        Some(watch) => watch
+            .followers()
+            .iter()
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    match env.new_string(joined) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Drop sightings older than `horizon` seconds, so yesterday's journey does not
+/// incriminate a device you have simply owned for a long time.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_pruneSightings(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    now_seconds: jdouble,
+    horizon_seconds: jdouble,
+) {
+    if let Some(watch) = unsafe { follow_watch(handle) } {
+        watch.prune(Timestamp(now_seconds), horizon_seconds);
+    }
+}
+
+/// # Safety
+/// `handle` must come from [`createFollowWatch`] and not yet be destroyed.
+unsafe fn follow_watch<'a>(handle: jlong) -> Option<&'a mut FollowWatch> {
+    if handle == 0 {
+        return None;
+    }
+    Some(&mut *(handle as *mut FollowWatch))
 }
 
 // ---------------------------------------------------------------------------

@@ -136,6 +136,19 @@ difference from a reference taken when the hunt began cancels that almost
 entirely. The output is a floor count with half a storey of deadband, so a desk
 and the floor beside it never read as different levels.
 
+### Haptics need the system setting
+
+Vibration is filed as touch-usage, so Android suppresses it entirely when
+"Vibration & haptics" is off — dispatched, logged, and discarded with
+`status: ignored_for_settings, scale: 0.00`, which looks exactly like a broken
+feature. Declaring `USAGE_ALARM` would fire regardless, but that setting is the
+user saying they do not want the phone buzzing at them, and a finder is not
+entitled to overrule it. The hunt screen says so instead.
+
+Sound, haptics and volume persist across launches. A phone hunted from a pocket
+is precisely where the process gets killed and relaunched, so losing the choice
+would happen at the moment it mattered most.
+
 ## Devices that have been travelling with you
 
 The same scan that finds your keys will notice a tracker slipped into your bag.

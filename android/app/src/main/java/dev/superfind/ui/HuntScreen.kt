@@ -409,6 +409,7 @@ private fun FeedbackToggles(
     onToggleSound: (Boolean) -> Unit,
     onToggleHaptics: (Boolean) -> Unit,
 ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
@@ -429,6 +430,22 @@ private fun FeedbackToggles(
                 onClick = { onToggleHaptics(!hapticsEnabled) },
             )
         }
+    }
+
+    // Android drops touch-usage vibrations outright when the system setting is
+    // off — dispatched, logged, discarded, with nothing to tell the user why.
+    // We could declare a usage that ignores the setting; saying so instead
+    // leaves the choice where it belongs.
+    if (hapticsEnabled && hasHaptics) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Needs Vibration & haptics turned on in system settings",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
     }
 }
 

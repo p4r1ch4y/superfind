@@ -89,6 +89,7 @@ private fun App(model: HuntViewModel = viewModel()) {
     val error by model.error.collectAsState()
     val linkSupported by model.linkSupported.collectAsState()
     val floors by model.floors.collectAsState()
+    val followers by model.followers.collectAsState()
     val soundEnabled by model.soundEnabled.collectAsState()
     val hapticsEnabled by model.hapticsEnabled.collectAsState()
 
@@ -113,6 +114,7 @@ private fun App(model: HuntViewModel = viewModel()) {
             instruction = capabilities.instruction,
             limitations = limitations,
             error = error,
+            followers = followers,
             onSelect = { model.startHunt(it.address, it.label) },
             onHuntAddress = { model.huntAddress(it) },
         )
