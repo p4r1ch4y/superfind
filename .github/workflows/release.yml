@@ -80,7 +80,14 @@ jobs:
 
             Verify either download against `checksums.txt`.
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "$NOTES" \
-            dist/*.apk dist/checksums.txt
+          # Upload everything in dist, not a hand-written list — an earlier
+          # version enumerated `dist/*.apk dist/checksums.txt` and silently
+          # dropped the CLI binary that the previous step had just built.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "$NOTES" \
+              dist/*
+          fi
