@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +22,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.MobileOff
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -75,6 +80,11 @@ fun HuntScreen(
     linkSupported: Boolean = true,
     /** Storeys climbed since the hunt began; null if unknown or no barometer. */
     floors: Int? = null,
+    soundEnabled: Boolean = false,
+    hapticsEnabled: Boolean = false,
+    hasHaptics: Boolean = true,
+    onToggleSound: (Boolean) -> Unit = {},
+    onToggleHaptics: (Boolean) -> Unit = {},
     onClose: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
@@ -147,6 +157,16 @@ fun HuntScreen(
                 )
             }
         }
+
+        Spacer(Modifier.height(10.dp))
+
+        FeedbackToggles(
+            soundEnabled = soundEnabled,
+            hapticsEnabled = hapticsEnabled,
+            hasHaptics = hasHaptics,
+            onToggleSound = onToggleSound,
+            onToggleHaptics = onToggleHaptics,
+        )
 
         Spacer(Modifier.weight(1f))
 
@@ -371,6 +391,73 @@ private fun Line(label: String, value: String, tone: androidx.compose.ui.graphic
             fontWeight = FontWeight.Medium,
             color = tone ?: MaterialTheme.colorScheme.onSurface,
         )
+    }
+}
+
+/**
+ * Sound and haptics, switchable mid-hunt.
+ *
+ * Both default to off. A finder that starts beeping the moment it opens gets
+ * muted permanently and then helps nobody — and the person deciding whether a
+ * search should make noise is the one holding the phone, not this code.
+ */
+@Composable
+private fun FeedbackToggles(
+    soundEnabled: Boolean,
+    hapticsEnabled: Boolean,
+    hasHaptics: Boolean,
+    onToggleSound: (Boolean) -> Unit,
+    onToggleHaptics: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FeedbackChip(
+            label = "Sound",
+            on = soundEnabled,
+            icon = if (soundEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+            onClick = { onToggleSound(!soundEnabled) },
+        )
+        if (hasHaptics) {
+            Spacer(Modifier.width(10.dp))
+            FeedbackChip(
+                label = "Buzz",
+                on = hapticsEnabled,
+                icon = if (hapticsEnabled) Icons.Filled.Vibration else Icons.Filled.MobileOff,
+                onClick = { onToggleHaptics(!hapticsEnabled) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeedbackChip(
+    label: String,
+    on: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    val tint = if (on) SuperfindColors.Nearest else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = if (on) {
+            SuperfindColors.Nearest.copy(alpha = 0.14f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint,
+                modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, color = tint)
+        }
     }
 }
 

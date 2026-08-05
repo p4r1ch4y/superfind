@@ -9,7 +9,7 @@
 A sensor-fusion core in Rust, an Android app, and a Linux CLI — all steering by
 the same filter.
 
-[![Tests](https://img.shields.io/badge/tests-168%20passing-success.svg)](#build-and-run)
+[![Tests](https://img.shields.io/badge/tests-181%20passing-success.svg)](#build-and-run)
 [![Android](https://img.shields.io/badge/Android-6.0%2B-3DDC84.svg)](android/)
 [![Rust core](https://img.shields.io/badge/core-Rust%2C%20zero%20deps-B7410E.svg)](crates/superfind-core)
 [![No INTERNET permission](https://img.shields.io/badge/INTERNET%20permission-none-success.svg)](#privacy)
@@ -61,6 +61,33 @@ git tag v0.1.0 && git push origin v0.1.0
 The APK is debug-signed, so Android warns on install — this is a private build,
 not a store release. F-Droid and Play Store packaging comes later, and will need
 a real signing key held outside this repository.
+
+## Hearing it instead of watching it
+
+Searching means looking at the room — under cushions, behind furniture — not at
+a screen. A cadence that quickens as you approach frees the eyes, which is why
+metal detectors have sounded the same way for sixty years.
+
+```sh
+superfind --sound "Pixel"
+superfind --sound --sound-fastest 60 --sound-volume 0.7 "Pixel"
+```
+
+In the app, **Sound** and **Buzz** are chips on the hunt screen. Both default to
+off — a finder that beeps the moment it opens gets muted permanently and then
+helps nobody — and haptics are separate because a phone hunted from a pocket is
+felt rather than heard.
+
+**Silence means no signal. It never means "far away".** A distant device still
+clicks, slowly. A device that has gone quiet produces nothing at all. If both
+were silent, somebody sweeping a room could not tell a dead link from a cold
+corner, and would keep searching a place the device had already left.
+
+Cadence carries the information rather than volume, because people judge rhythm
+far better than level, and rhythm survives a pocket as vibration. Pitch rises
+alongside it so the two read as one gesture. The fastest cadence is floored at
+about 60 ms, below which clicks fuse into a buzz and the rhythm — the actual
+signal — disappears.
 
 ## Hunting with more than one device
 

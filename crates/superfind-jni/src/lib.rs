@@ -29,8 +29,8 @@ use jni::sys::{jboolean, jdouble, jdoubleArray, jint, jlong, JNI_FALSE, JNI_TRUE
 use jni::JNIEnv;
 
 use superfind_core::{
-    Altimeter, FloorDelta, Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource,
-    Snapshot, Timestamp, Tracker, TrackerConfig, Trend,
+    Altimeter, FeedbackConfig, FloorDelta, Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource,
+    ProximityCue, Snapshot, Timestamp, Tracker, TrackerConfig, Trend,
 };
 
 /// Fixed-size prefix of the snapshot encoding. Must match `Snapshots.HEADER`.
@@ -415,6 +415,51 @@ fn trend_ordinal(t: Trend) -> f64 {
         Trend::Steady => 2.0,
         Trend::Unknown => 3.0,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Proximity feedback
+// ---------------------------------------------------------------------------
+
+/// Map a reading to a click cadence: `[interval_ms, pitch_hz, intensity]`.
+///
+/// A free function rather than a tracker method because the mapping depends on
+/// nothing but the reading and the configuration — and keeping it here means
+/// the phone and the laptop click identically rather than drifting apart in two
+/// hand-written copies.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_proximityCue(
+    env: JNIEnv,
+    _class: JClass,
+    dbm: jdouble,
+    min_interval_ms: jint,
+    max_interval_ms: jint,
+    min_pitch_hz: jint,
+    max_pitch_hz: jint,
+    near_dbm: jdouble,
+    far_dbm: jdouble,
+) -> jdoubleArray {
+    let config = FeedbackConfig {
+        enabled: true,
+        min_interval_ms: min_interval_ms.max(0) as u32,
+        max_interval_ms: max_interval_ms.max(0) as u32,
+        min_pitch_hz: min_pitch_hz.max(0) as u32,
+        max_pitch_hz: max_pitch_hz.max(0) as u32,
+        near_dbm,
+        far_dbm,
+        // Amplitude is applied by the Kotlin synthesiser, not here; the cue only
+        // describes cadence and pitch.
+        volume: FeedbackConfig::default().volume,
+    };
+    let cue = ProximityCue::for_rssi(dbm, &config);
+    write_doubles(
+        &env,
+        &[
+            cue.interval_ms as f64,
+            cue.pitch_hz as f64,
+            cue.intensity,
+        ],
+    )
 }
 
 // ---------------------------------------------------------------------------

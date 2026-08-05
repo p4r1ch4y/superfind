@@ -54,6 +54,10 @@ impl DeviceIdentity {
     /// useful. Callers fall back to the address.
     pub fn label(&self) -> Option<String> {
         match (&self.vendor, &self.kind) {
+            // A device advertising Google's company ID *and* a Google service
+            // would otherwise read "Google · Google". The service adds nothing
+            // once the vendor has said the same thing.
+            (Some(v), Some(k)) if v.eq_ignore_ascii_case(k) => Some(format!("{v} device")),
             (Some(v), Some(k)) => Some(format!("{v} · {k}")),
             (None, Some(k)) => Some(k.clone()),
             (Some(v), None) => Some(format!("{v} device")),
@@ -204,6 +208,14 @@ mod tests {
     fn an_unknown_company_is_reported_by_number_not_invented() {
         let id = DeviceIdentity::from_advert(&mfg(0xABCD, &[1, 2]), &[]);
         assert_eq!(id.label().as_deref(), Some("Company 0xABCD device"));
+    }
+
+    #[test]
+    fn a_vendor_is_not_repeated_as_its_own_service() {
+        // Seen in the wild: a device advertising Google's company ID and a
+        // Google service UUID rendered as "Google · Google".
+        let id = DeviceIdentity::from_advert(&mfg(0x00E0, &[]), &[0xFE9F]);
+        assert_eq!(id.label().as_deref(), Some("Google device"));
     }
 
     #[test]

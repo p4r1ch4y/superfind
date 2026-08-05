@@ -89,6 +89,8 @@ private fun App(model: HuntViewModel = viewModel()) {
     val error by model.error.collectAsState()
     val linkSupported by model.linkSupported.collectAsState()
     val floors by model.floors.collectAsState()
+    val soundEnabled by model.soundEnabled.collectAsState()
+    val hapticsEnabled by model.hapticsEnabled.collectAsState()
 
     // The native-core warning joins the hardware limitations: from the user's
     // point of view they are the same kind of fact — something this build of
@@ -129,6 +131,11 @@ private fun App(model: HuntViewModel = viewModel()) {
             randomisedAddress = current.randomisedAddress,
             linkSupported = linkSupported,
             floors = floors,
+            soundEnabled = soundEnabled,
+            hapticsEnabled = hapticsEnabled,
+            hasHaptics = model.hasHaptics,
+            onToggleSound = { model.setSound(it) },
+            onToggleHaptics = { model.setHaptics(it) },
             onClose = { model.closeHunt() },
             onReset = { model.reset() },
         )

@@ -116,6 +116,22 @@ object NativeCore {
     /** Particle cloud as interleaved `x, y` pairs, for the posterior heat map. */
     external fun particles(handle: Long): DoubleArray?
 
+    /**
+     * Map a reading to a click cadence: `[intervalMs, pitchHz, intensity]`.
+     *
+     * Computed in the core so the phone and the laptop click identically rather
+     * than drifting apart in two hand-written copies.
+     */
+    external fun proximityCue(
+        dbm: Double,
+        minIntervalMs: Int,
+        maxIntervalMs: Int,
+        minPitchHz: Int,
+        maxPitchHz: Int,
+        nearDbm: Double,
+        farDbm: Double,
+    ): DoubleArray?
+
     // ---- Altitude ----------------------------------------------------------
     //
     // A handle of its own rather than a field on the tracker: pressure readings

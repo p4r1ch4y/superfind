@@ -81,6 +81,7 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     private val scanner = BleScanner(app)
     private val known = KnownDevices(app)
     private val gatt = GattLink(app)
+    private val feedback = ProximityFeedback(app)
 
     /**
      * Lives for the whole app, not for one hunt.
@@ -122,6 +123,28 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     val floors: StateFlow<Int?> = _floors.asStateFlow()
 
     val hasBarometer: Boolean get() = sensors.hasBarometer
+    val hasHaptics: Boolean get() = feedback.hasHaptics
+
+    private val _soundEnabled = MutableStateFlow(false)
+    val soundEnabled: StateFlow<Boolean> = _soundEnabled.asStateFlow()
+
+    private val _hapticsEnabled = MutableStateFlow(false)
+    val hapticsEnabled: StateFlow<Boolean> = _hapticsEnabled.asStateFlow()
+
+    /** Amplitude, 0 to 1. Defaults loud; see [ProximityFeedback.volume]. */
+    fun setVolume(volume: Double) {
+        feedback.volume = volume
+    }
+
+    fun setSound(on: Boolean) {
+        _soundEnabled.value = on
+        feedback.soundEnabled = on
+    }
+
+    fun setHaptics(on: Boolean) {
+        _hapticsEnabled.value = on
+        feedback.hapticsEnabled = on
+    }
 
     private var tracker: Tracker? = null
     private var scanJob: Job? = null
@@ -238,6 +261,8 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         // and Classic-only audio devices never show up in an LE scan at all.
         // Both sources feed the same filter, which already trusts a link read
         // roughly twice as much as an advertisement.
+        feedback.start(viewModelScope)
+
         // The floor readout is relative to where the hunt started, not to where
         // the app launched.
         if (altimeter != 0L) NativeCore.anchorAltitude(altimeter)
@@ -296,6 +321,20 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
                 // time series rather than a handful of screenshots. Cheap, and
                 // it is the only way to tell whether the signal actually tracked
                 // the walk or merely looked plausible in a still frame.
+                // Silence here means the reading has gone stale, never that the
+                // device is merely far away — a distant one still clicks slowly.
+                val dbm = snap.rssiDbm
+                if (dbm != null && snap.isFresh && NativeCore.available) {
+                    val cue = runCatching {
+                        NativeCore.proximityCue(dbm, 70, 1400, 440, 1320, -45.0, -95.0)
+                    }.getOrNull()
+                    if (cue != null && cue.size >= 2) {
+                        feedback.update(cue[0].toInt(), cue[1].toInt())
+                    }
+                } else {
+                    feedback.silence()
+                }
+
                 if (altimeter != 0L) {
                     val delta = NativeCore.floorDelta(altimeter)
                     _floors.value = if (delta.isNaN()) null else delta.toInt()
@@ -351,6 +390,7 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun stopAll() {
+        feedback.silence()
         scanJob?.cancel(); scanJob = null
         motionJob?.cancel(); motionJob = null
         linkJob?.cancel(); linkJob = null
@@ -384,6 +424,7 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         stopAll()
+        feedback.stop()
         if (altimeter != 0L) runCatching { NativeCore.destroyAltimeter(altimeter) }
         super.onCleared()
     }

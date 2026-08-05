@@ -33,6 +33,11 @@
          Sounding and Wi-Fi NAN RTT together. -->
     <uses-permission android:name="android.permission.RANGING" />
 
+    <!-- Haptic proximity feedback. A normal permission: granted at install
+         with no prompt, but absent it vibrate() throws and the buzz would
+         silently never happen. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Step detection for dead reckoning. Only needed from Android 10. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"
         tools:targetApi="q" />

@@ -58,6 +58,7 @@
 //! - [`peer`] — observations shared between devices hunting the same thing
 //! - [`following`] — devices that have been travelling with you, per DULT
 //! - [`altitude`] — which floor it is on, from a barometer
+//! - [`feedback`] — hearing the signal instead of watching it
 //! - [`tracker`] — the facade, and the immutable snapshot a UI renders
 //! - [`geom`], [`rng`], [`time`] — primitives
 
@@ -67,6 +68,7 @@
 pub mod altitude;
 pub mod bearing;
 pub mod capability;
+pub mod feedback;
 pub mod filter;
 pub mod geom;
 pub mod following;
@@ -82,6 +84,7 @@ pub mod tracker;
 pub use altitude::{Altimeter, FloorDelta};
 pub use bearing::{BearingEstimate, SyntheticAperture};
 pub use capability::{BearingQuality, Capabilities, Tier};
+pub use feedback::{FeedbackConfig, ProximityCue};
 pub use filter::{Fix, FilterConfig, ParticleFilter};
 pub use geom::{to_degrees, to_radians, Covariance2, Ellipse, Point2};
 pub use following::{FollowPolicy, FollowVerdict, FollowWatch};

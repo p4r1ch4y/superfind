@@ -16,6 +16,7 @@
 
 mod ble;
 mod peers;
+mod sound;
 mod calibration;
 mod ui;
 
@@ -40,6 +41,10 @@ superfind — locate a Bluetooth device by signal strength
   --adapter <hciN>   use a specific adapter (default: the first powered one)
   --step <metres>    distance per keypress in hunt mode (default: 1.0)
   --no-calibration   ignore any saved calibration, use the built-in priors
+  --sound            click faster as you get closer (off by default)
+  --sound-fastest <ms>  cadence at arm's reach (default 70)
+  --sound-slowest <ms>  cadence at the edge of range (default 1400)
+  --sound-volume <0-1>  loudness (default 0.9)
   --share <session>  pool readings with other devices hunting the same thing
   --at <x,y>         where this device is, in metres, in the shared frame
   -h, --help         this message
@@ -58,6 +63,11 @@ struct Args {
     step_m: f64,
     /// Session name for sharing observations with other devices.
     share: Option<String>,
+    /// Audible proximity cadence, and how fast it may get at close range.
+    sound: bool,
+    sound_min_ms: Option<u32>,
+    sound_max_ms: Option<u32>,
+    sound_volume: Option<f64>,
     /// This device's position in the shared frame, in metres.
     at: Option<superfind_core::Point2>,
 }
@@ -88,6 +98,10 @@ fn parse_args<I: Iterator<Item = String>>(it: I) -> Result<Args> {
         step_m: 1.0,
         share: None,
         at: None,
+        sound: false,
+        sound_min_ms: None,
+        sound_max_ms: None,
+        sound_volume: None,
     };
     let mut it = it.peekable();
 
@@ -100,6 +114,28 @@ fn parse_args<I: Iterator<Item = String>>(it: I) -> Result<Args> {
             "--list" => args.list = true,
             "--calibrate" => args.calibrate = true,
             "--no-calibration" => args.no_calibration = true,
+            "--sound" => args.sound = true,
+            "--sound-volume" => {
+                let raw = it.next().context("--sound-volume needs a value from 0 to 1")?;
+                args.sound_volume = Some(
+                    raw.parse()
+                        .with_context(|| format!("--sound-volume: '{raw}' is not a number"))?,
+                );
+            }
+            "--sound-fastest" => {
+                let raw = it.next().context("--sound-fastest needs milliseconds")?;
+                args.sound_min_ms = Some(
+                    raw.parse()
+                        .with_context(|| format!("--sound-fastest: '{raw}' is not a number"))?,
+                );
+            }
+            "--sound-slowest" => {
+                let raw = it.next().context("--sound-slowest needs milliseconds")?;
+                args.sound_max_ms = Some(
+                    raw.parse()
+                        .with_context(|| format!("--sound-slowest: '{raw}' is not a number"))?,
+                );
+            }
             "--share" => {
                 args.share = Some(it.next().context("--share needs a session name")?)
             }
@@ -193,6 +229,21 @@ async fn run() -> Result<()> {
                 }
                 None => None,
             };
+            let mut feedback = superfind_core::FeedbackConfig {
+                enabled: args.sound,
+                ..Default::default()
+            };
+            if let Some(ms) = args.sound_min_ms {
+                feedback.min_interval_ms = ms;
+            }
+            if let Some(ms) = args.sound_max_ms {
+                feedback.max_interval_ms = ms;
+            }
+            if let Some(v) = args.sound_volume {
+                feedback.volume = v;
+            }
+            let feedback = feedback.sanitised();
+
             hunt(
                 &scanner,
                 &style,
@@ -200,6 +251,7 @@ async fn run() -> Result<()> {
                 args.step_m,
                 args.no_calibration,
                 link,
+                feedback,
             )
             .await
         }
@@ -438,6 +490,7 @@ async fn hunt(
     step_m: f64,
     ignore_calibration: bool,
     link: Option<peers::PeerLink>,
+    feedback: superfind_core::FeedbackConfig,
 ) -> Result<()> {
     let mut adverts = scanner.adverts().await?;
     let mut config = TrackerConfig::default();
@@ -452,6 +505,24 @@ async fn hunt(
     let mut tracker = Tracker::new(config);
     let started = Instant::now();
     let mut address = String::from("(searching…)");
+
+    // Started before raw mode so any player noise on startup is not painted
+    // over the alternate screen.
+    let speaker = if feedback.enabled {
+        let speaker = sound::Speaker::open(feedback.volume);
+        // Which mode is in use, rather than leaving somebody wondering why it
+        // is quiet: with no player available this degrades to terminal bells,
+        // which many terminals render as a flash or drop entirely.
+        if !speaker.is_audible() {
+            eprintln!(
+                "no audio player found (tried aplay, pw-play) — falling back to \
+                 terminal bells, which some terminals ignore"
+            );
+        }
+        Some(speaker)
+    } else {
+        None
+    };
 
     // Raw mode so single keypresses drive movement without waiting for Enter.
     enable_raw_mode().context("could not put the terminal into raw mode")?;
@@ -545,6 +616,14 @@ async fn hunt(
                     }
                 }
                 let snapshot = tracker.snapshot(elapsed(&started));
+
+                // Silence here means the signal has gone stale, never that the
+                // device is merely far away — a distant one still clicks slowly.
+                if let Some(speaker) = &speaker {
+                    speaker.play(superfind_core::ProximityCue::for_snapshot(
+                        &snapshot, &feedback,
+                    ));
+                }
                 // Raw mode means a bare \n does not imply a carriage return.
                 let frame = ui::render_hunt(style, query, &address, &snapshot, model_source)
                     .replace('\n', "\r\n");
