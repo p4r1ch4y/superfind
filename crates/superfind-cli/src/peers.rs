@@ -87,10 +87,6 @@ impl PeerLink {
         &self.anchor
     }
 
-    pub fn position(&self) -> Option<Point2> {
-        self.position
-    }
-
     /// Announce a reading. Silent on failure — a hunt must not stop because the
     /// network did.
     pub fn share(&self, target: &str, rssi_dbm: f64, source_seconds: f64, source: RssiKind) {
@@ -139,8 +135,11 @@ impl PeerLink {
         out
     }
 
-    /// Block briefly waiting for any peer to speak. For a "is anyone else
-    /// there?" check before a hunt starts.
+    /// Whether anyone else is already sharing this session.
+    ///
+    /// Worth answering at startup: a mistyped session name produces a hunt that
+    /// looks like it is pooling readings and silently is not, and that is a
+    /// failure the user has no other way to notice.
     pub fn wait_for_peer(&self, timeout: Duration) -> Result<bool> {
         self.socket.set_nonblocking(false)?;
         self.socket.set_read_timeout(Some(timeout))?;

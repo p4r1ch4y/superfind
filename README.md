@@ -9,7 +9,7 @@
 A sensor-fusion core in Rust, an Android app, and a Linux CLI — all steering by
 the same filter.
 
-[![Tests](https://img.shields.io/badge/tests-138%20passing-success.svg)](#build-and-run)
+[![Tests](https://img.shields.io/badge/tests-168%20passing-success.svg)](#build-and-run)
 [![Android](https://img.shields.io/badge/Android-6.0%2B-3DDC84.svg)](android/)
 [![Rust core](https://img.shields.io/badge/core-Rust%2C%20zero%20deps-B7410E.svg)](crates/superfind-core)
 [![No INTERNET permission](https://img.shields.io/badge/INTERNET%20permission-none-success.svg)](#privacy)
@@ -61,6 +61,69 @@ git tag v0.1.0 && git push origin v0.1.0
 The APK is debug-signed, so Android warns on install — this is a private build,
 not a store release. F-Droid and Play Store packaging comes later, and will need
 a real signing key held outside this repository.
+
+## Hunting with more than one device
+
+One observer sees an annulus — "somewhere on a ring around me" — which is why
+the app asks you to walk a dogleg. Two observers intersect two rings, standing
+still.
+
+```sh
+# On the anchoring device, which defines the origin:
+superfind --share kitchen --at 0,0 "Pixel"
+
+# On a second device, eight metres east of it:
+superfind --share kitchen --at 8,0 "Pixel"
+```
+
+Each shares its readings over the local network, and each folds the other's in
+at the position it was taken from. The status line reports how many readings
+came from peers, because that is the difference between an annulus and a fix.
+
+**Two observers are not enough for a unique answer.** Two circles meet at two
+points, so the target stays indistinguishable from its reflection in the line
+joining the observers — the ambiguity is geometric and precision cannot touch
+it. The posterior honestly straddles both lobes, which is why the point estimate
+can be metres out while the ellipse is small. A third observer off that line
+resolves it, and so does one observer taking a few steps sideways. All three
+cases are pinned down by tests.
+
+The hard part is the shared frame: nothing in Bluetooth tells two phones where
+they are relative to each other, so `--at` is typed by a human with a tape
+measure or a floor plan. A peer that cannot say where it is contributes nothing
+and is dropped rather than fused, because a range from an unknown centre
+constrains nothing at all.
+
+Sharing is off unless asked for. The packets carry the hunted address and rough
+positions, and anything on the same network can read them.
+
+## Which floor it is on
+
+Every locator on the market answers in two dimensions and then leaves you
+searching the wrong storey. A barometer settles it: pressure falls about 12 Pa
+per metre, and phone barometers resolve well under that.
+
+Only *differences* are reported. Absolute altitude needs the weather — being
+wrong about sea-level pressure by 1 hPa moves the answer two storeys — and a
+difference from a reference taken when the hunt began cancels that almost
+entirely. The output is a floor count with half a storey of deadband, so a desk
+and the floor beside it never read as different levels.
+
+## Devices that have been travelling with you
+
+The same scan that finds your keys will notice a tracker slipped into your bag.
+That is not a coincidence; it is the same measurement read the other way, and
+the [DULT specification][dult] exists because the capability is unavoidable.
+
+What matters is persistence across *places you have moved between* — not
+loudness, and not duration. A device on your desk all afternoon has followed
+nobody; a tag present across a kilometre of walking has. Every threshold errs
+towards silence, because telling somebody they are being followed when they are
+not invites them to search their own belongings and distrust their colleagues.
+
+It reports co-travel, which is not proof of malice, and the wording says so.
+
+[dult]: https://developers.google.com/nearby/fast-pair/specifications/extensions/fmdn
 
 ## The Linux CLI
 

@@ -178,6 +178,17 @@ async fn run() -> Result<()> {
                              device will fuse peers' readings but contribute none of its own"
                         ),
                     }
+                    // A mistyped session name otherwise produces a hunt that
+                    // looks like it is pooling readings and is not.
+                    match link.wait_for_peer(Duration::from_millis(700)) {
+                        Ok(true) => eprintln!("heard another peer on '{}'", link.anchor().session),
+                        Ok(false) => eprintln!(
+                            "no other peer on '{}' yet — readings will be shared \
+                             as soon as one joins",
+                            link.anchor().session
+                        ),
+                        Err(_) => {}
+                    }
                     Some(link)
                 }
                 None => None,

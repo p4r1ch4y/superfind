@@ -142,7 +142,7 @@ impl Altimeter {
         if storeys.abs() < 0.5 {
             return Some(FloorDelta::SameLevel);
         }
-        let count = storeys.abs().round().max(1.0).min(255.0) as u8;
+        let count = storeys.abs().round().clamp(1.0, 255.0) as u8;
         Some(if storeys > 0.0 {
             FloorDelta::Above(count)
         } else {
