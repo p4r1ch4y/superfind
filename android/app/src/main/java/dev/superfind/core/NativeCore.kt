@@ -55,6 +55,21 @@ object NativeCore {
      */
     external fun observeRssi(handle: Long, dbm: Double, source: Int, atSeconds: Double): Boolean
 
+    /**
+     * Fold in a peer's reading, taken from a known position in the shared frame.
+     *
+     * The counterpart of [observeRssi], and what lets the app locate something
+     * without walking: one observer's likelihood is a ring, two intersect.
+     */
+    external fun observeRssiFrom(
+        handle: Long,
+        dbm: Double,
+        source: Int,
+        x: Double,
+        y: Double,
+        atSeconds: Double,
+    ): Boolean
+
     /** Fold in a true metric range from UWB, Channel Sounding or Wi-Fi RTT. */
     external fun observeRange(handle: Long, metres: Double, source: Int, atSeconds: Double): Boolean
 
@@ -100,4 +115,27 @@ object NativeCore {
 
     /** Particle cloud as interleaved `x, y` pairs, for the posterior heat map. */
     external fun particles(handle: Long): DoubleArray?
+
+    // ---- Altitude ----------------------------------------------------------
+    //
+    // A handle of its own rather than a field on the tracker: pressure readings
+    // start before a hunt and outlive it, so tying the altimeter to a tracker
+    // would discard the settled baseline every time the user picks a different
+    // device to look for.
+
+    external fun createAltimeter(): Long
+
+    external fun destroyAltimeter(handle: Long)
+
+    /** Fold in a pressure reading in pascals. False if implausible. */
+    external fun observePressure(handle: Long, pascals: Double, atSeconds: Double): Boolean
+
+    /** Re-anchor to here, so the answer is "since you started looking". */
+    external fun anchorAltitude(handle: Long)
+
+    /**
+     * Storeys climbed since the anchor. Negative is below, `NaN` means not yet
+     * known — a couple of samples are noise rather than a reading.
+     */
+    external fun floorDelta(handle: Long): Double
 }

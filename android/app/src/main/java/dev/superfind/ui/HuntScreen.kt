@@ -73,6 +73,8 @@ fun HuntScreen(
     randomisedAddress: Boolean = false,
     /** False for Classic-only targets: no GATT link, so no connected reading. */
     linkSupported: Boolean = true,
+    /** Storeys climbed since the hunt began; null if unknown or no barometer. */
+    floors: Int? = null,
     onClose: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
@@ -104,7 +106,7 @@ fun HuntScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        EstimateBlock(snapshot, fusionAvailable, instruction, headingIsAbsolute)
+        EstimateBlock(snapshot, fusionAvailable, instruction, headingIsAbsolute, floors)
 
         // A rotating address that has gone quiet is a specific, explicable
         // failure — not the same as a device being out of range, and saying
@@ -254,6 +256,7 @@ private fun EstimateBlock(
     fusionAvailable: Boolean,
     instruction: String,
     headingIsAbsolute: Boolean,
+    floors: Int?,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -290,6 +293,29 @@ private fun EstimateBlock(
                         Line("Give or take", "%.1f m".format(fix.semiMajorM))
                     }
                 }
+            }
+
+            // Which floor, when the hardware can say. Almost no locator answers
+            // this, and it is the difference between searching a room and
+            // searching a building.
+            if (floors != null) {
+                Line(
+                    "Floor",
+                    when {
+                        floors == 0 -> "same level"
+                        floors == 1 -> "one floor up"
+                        floors == -1 -> "one floor down"
+                        floors > 1 -> "$floors floors up"
+                        else -> "${-floors} floors down"
+                    },
+                    tone = if (floors == 0) null else SuperfindColors.Mid,
+                )
+            }
+
+            // Peers only appear once they are actually contributing, so a solo
+            // hunt is not cluttered with a permanent zero.
+            if (snapshot.remoteObservations > 0) {
+                Line("Pooled", "${snapshot.remoteObservations} readings from peers")
             }
 
             val bearing = snapshot.bearing

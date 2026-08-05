@@ -22,6 +22,14 @@ sealed interface Motion {
     data class Heading(val radians: Double) : Motion
     /** One detected step, of an estimated length in metres. */
     data class Step(val lengthM: Double) : Motion
+    /**
+     * Ambient pressure in pascals.
+     *
+     * Optional hardware: plenty of phones have no barometer at all, including
+     * the one this was first tested on. Its absence costs the floor readout and
+     * nothing else.
+     */
+    data class Pressure(val pascals: Double) : Motion
 }
 
 /**
@@ -47,6 +55,10 @@ class MotionSensors(
 ) {
     private val sensors =
         context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+
+    /** Whether this device can tell you which floor something is on. */
+    val hasBarometer: Boolean =
+        sensors?.getDefaultSensor(Sensor.TYPE_PRESSURE) != null
 
     fun motion(): Flow<Motion> = callbackFlow {
         val manager = sensors
@@ -102,6 +114,11 @@ class MotionSensors(
                     }
 
                     Sensor.TYPE_STEP_DETECTOR -> trySend(Motion.Step(strideM))
+
+                    // Reported in hectopascals; the core works in pascals
+                    // because a storey is 37 Pa and hPa would quantise it away.
+                    Sensor.TYPE_PRESSURE ->
+                        trySend(Motion.Pressure(event.values[0].toDouble() * 100.0))
                 }
             }
 
@@ -131,6 +148,10 @@ class MotionSensors(
             CompassSource.GAME_ROTATION_VECTOR -> register(Sensor.TYPE_GAME_ROTATION_VECTOR)
             CompassSource.NONE -> Unit
         }
+
+        // Slow rate: pressure moves at the speed of weather and stairs, and the
+        // core smooths heavily anyway.
+        if (hasBarometer) register(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL)
 
         when (stepSource) {
             StepSource.HARDWARE_DETECTOR -> register(Sensor.TYPE_STEP_DETECTOR)

@@ -88,6 +88,7 @@ private fun App(model: HuntViewModel = viewModel()) {
     val snapshot by model.snapshot.collectAsState()
     val error by model.error.collectAsState()
     val linkSupported by model.linkSupported.collectAsState()
+    val floors by model.floors.collectAsState()
 
     // The native-core warning joins the hardware limitations: from the user's
     // point of view they are the same kind of fact — something this build of
@@ -127,6 +128,7 @@ private fun App(model: HuntViewModel = viewModel()) {
             headingIsAbsolute = capabilities.headingIsAbsolute,
             randomisedAddress = current.randomisedAddress,
             linkSupported = linkSupported,
+            floors = floors,
             onClose = { model.closeHunt() },
             onReset = { model.reset() },
         )

@@ -29,8 +29,8 @@ use jni::sys::{jboolean, jdouble, jdoubleArray, jint, jlong, JNI_FALSE, JNI_TRUE
 use jni::JNIEnv;
 
 use superfind_core::{
-    Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource, Snapshot, Timestamp,
-    Tracker, TrackerConfig, Trend,
+    Altimeter, FloorDelta, Measurement, PathLoss, Point2, Proximity, RangeSource, RssiSource,
+    Snapshot, Timestamp, Tracker, TrackerConfig, Trend,
 };
 
 /// Fixed-size prefix of the snapshot encoding. Must match `Snapshots.HEADER`.
@@ -169,6 +169,34 @@ pub extern "system" fn Java_dev_superfind_core_NativeCore_observeAngle(
             sigma_rad,
             at: Timestamp(at_seconds),
         });
+        if accepted { JNI_TRUE } else { JNI_FALSE }
+    })
+}
+
+/// Fold in a peer's reading, taken from a known position in the shared frame.
+///
+/// The counterpart of `observeRssi`, and the reason the app can locate anything
+/// without walking: one observer's likelihood is an annulus, two intersect.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_observeRssiFrom(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    dbm: jdouble,
+    source: jint,
+    x: jdouble,
+    y: jdouble,
+    at_seconds: jdouble,
+) -> jboolean {
+    with_tracker!(handle, JNI_FALSE, |t| {
+        let accepted = t.observe_from(
+            Measurement::Rssi {
+                dbm,
+                source: rssi_source(source),
+                at: Timestamp(at_seconds),
+            },
+            Point2::new(x, y),
+        );
         if accepted { JNI_TRUE } else { JNI_FALSE }
     })
 }
@@ -387,6 +415,96 @@ fn trend_ordinal(t: Trend) -> f64 {
         Trend::Steady => 2.0,
         Trend::Unknown => 3.0,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Altimeter
+// ---------------------------------------------------------------------------
+//
+// A separate handle rather than a field on the tracker: pressure readings begin
+// arriving before a hunt starts and outlive it, so tying the altimeter's
+// lifetime to a tracker would throw away the settled baseline every time the
+// user picks a different device.
+
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_createAltimeter(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    Box::into_raw(Box::new(Altimeter::default())) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_destroyAltimeter(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        drop(unsafe { Box::from_raw(handle as *mut Altimeter) });
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_observePressure(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    pascals: jdouble,
+    at_seconds: jdouble,
+) -> jboolean {
+    match unsafe { altimeter(handle) } {
+        None => JNI_FALSE,
+        Some(a) => {
+            if a.observe(pascals, Timestamp(at_seconds)) {
+                JNI_TRUE
+            } else {
+                JNI_FALSE
+            }
+        }
+    }
+}
+
+/// Re-anchor to here, so the answer is "since you started looking".
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_anchorAltitude(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if let Some(a) = unsafe { altimeter(handle) } {
+        a.anchor();
+    }
+}
+
+/// Storeys climbed since the anchor: negative below, `NaN` when not yet known.
+///
+/// One double rather than an enum plus a count, because the Kotlin side has to
+/// rebuild the enum anyway and a signed number cannot be got out of order.
+#[no_mangle]
+pub extern "system" fn Java_dev_superfind_core_NativeCore_floorDelta(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jdouble {
+    let Some(a) = (unsafe { altimeter(handle) }) else {
+        return f64::NAN;
+    };
+    match a.floors() {
+        None => f64::NAN,
+        Some(FloorDelta::SameLevel) => 0.0,
+        Some(FloorDelta::Above(n)) => n as f64,
+        Some(FloorDelta::Below(n)) => -(n as f64),
+    }
+}
+
+/// # Safety
+/// `handle` must come from [`createAltimeter`] and not yet be destroyed.
+unsafe fn altimeter<'a>(handle: jlong) -> Option<&'a mut Altimeter> {
+    if handle == 0 {
+        return None;
+    }
+    Some(&mut *(handle as *mut Altimeter))
 }
 
 // ---------------------------------------------------------------------------

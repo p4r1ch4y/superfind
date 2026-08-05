@@ -13,7 +13,9 @@ import dev.superfind.radio.BleScanner
 import dev.superfind.radio.Capabilities
 import dev.superfind.radio.GattLink
 import dev.superfind.radio.KnownDevice
+import dev.superfind.core.NativeCore
 import dev.superfind.radio.KnownDevices
+import dev.superfind.radio.PeerLink
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +81,21 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     private val scanner = BleScanner(app)
     private val known = KnownDevices(app)
     private val gatt = GattLink(app)
+
+    /**
+     * Lives for the whole app, not for one hunt.
+     *
+     * Pressure readings need time to settle, and start arriving long before the
+     * user picks something to look for. Recreating this per hunt would throw the
+     * settled baseline away each time and report "same level" for a minute.
+     */
+    private val altimeter: Long =
+        if (NativeCore.available) runCatching { NativeCore.createAltimeter() }.getOrDefault(0L)
+        else 0L
+
+    /** Where this device is in a shared frame, when hunting with others. */
+    private var peerLink: PeerLink? = null
+    private var peerPosition: Pair<Double, Double>? = null
     private val sensors = MotionSensors(app, capabilities.compassSource, capabilities.stepSource)
 
     private val _screen = MutableStateFlow<Screen>(Screen.Survey)
@@ -97,11 +114,21 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     private val _linkSupported = MutableStateFlow(true)
     val linkSupported: StateFlow<Boolean> = _linkSupported.asStateFlow()
 
+    /**
+     * Storeys climbed since the hunt began. Null when this device has no
+     * barometer, or has not gathered enough samples to say.
+     */
+    private val _floors = MutableStateFlow<Int?>(null)
+    val floors: StateFlow<Int?> = _floors.asStateFlow()
+
+    val hasBarometer: Boolean get() = sensors.hasBarometer
+
     private var tracker: Tracker? = null
     private var scanJob: Job? = null
     private var motionJob: Job? = null
     private var tickJob: Job? = null
     private var linkJob: Job? = null
+    private var peerJob: Job? = null
 
     val fusionAvailable: Boolean get() = tracker?.fusionAvailable ?: false
 
@@ -196,6 +223,13 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
                         source = RssiSource.ADVERTISEMENT,
                         atSeconds = advert.timestampSeconds,
                     )
+                    // Pass it on so peers can intersect their ring with ours.
+                    peerLink?.share(
+                        target = address,
+                        rssiDbm = advert.rssi,
+                        seconds = advert.timestampSeconds,
+                        source = RssiSource.ADVERTISEMENT.ordinal,
+                    )
                 }
         }
 
@@ -204,6 +238,10 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         // and Classic-only audio devices never show up in an LE scan at all.
         // Both sources feed the same filter, which already trusts a link read
         // roughly twice as much as an advertisement.
+        // The floor readout is relative to where the hunt started, not to where
+        // the app launched.
+        if (altimeter != 0L) NativeCore.anchorAltitude(altimeter)
+
         // Only started where a GATT server can exist. Classic-only devices are
         // reported as unsupported instead, which the UI states plainly.
         _linkSupported.value = gatt.isSupported(address)
@@ -219,12 +257,30 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
+        // Peers observing the same device from their own positions. This is what
+        // collapses the annulus that one observer, standing still, never can.
+        peerLink?.let { link ->
+            peerJob = viewModelScope.launch {
+                link.reports(address).collect { report ->
+                    active.observeRssiFrom(
+                        dbm = report.rssiDbm,
+                        sourceOrdinal = report.source,
+                        x = report.x,
+                        y = report.y,
+                        atSeconds = report.seconds,
+                    )
+                }
+            }
+        }
+
         motionJob = viewModelScope.launch {
             sensors.motion().collect { motion ->
                 val now = BleScanner.now()
                 when (motion) {
                     is Motion.Heading -> active.setHeading(motion.radians, now)
                     is Motion.Step -> active.step(motion.lengthM, now)
+                    is Motion.Pressure ->
+                        if (altimeter != 0L) NativeCore.observePressure(altimeter, motion.pascals, now)
                 }
             }
         }
@@ -240,6 +296,11 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
                 // time series rather than a handful of screenshots. Cheap, and
                 // it is the only way to tell whether the signal actually tracked
                 // the walk or merely looked plausible in a still frame.
+                if (altimeter != 0L) {
+                    val delta = NativeCore.floorDelta(altimeter)
+                    _floors.value = if (delta.isNaN()) null else delta.toInt()
+                }
+
                 if (now - lastLogged >= 1.0) {
                     lastLogged = now
                     android.util.Log.d(
@@ -293,12 +354,37 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         scanJob?.cancel(); scanJob = null
         motionJob?.cancel(); motionJob = null
         linkJob?.cancel(); linkJob = null
+        peerJob?.cancel(); peerJob = null
         tickJob?.cancel(); tickJob = null
         tracker?.close(); tracker = null
     }
 
+    /**
+     * Pool readings with other devices hunting the same thing.
+     *
+     * `position` is metres east and north of whoever anchored the session, and
+     * nothing establishes that frame automatically — it is measured by a person.
+     * Null means this device listens and fuses but contributes nothing, which is
+     * the honest state for a device nobody has placed.
+     */
+    fun shareWith(session: String, position: Pair<Double, Double>?) {
+        peerPosition = position
+        peerLink = PeerLink(getApplication(), session, PeerLink.deviceName(), position)
+        // Take effect on the next hunt rather than mid-flight: swapping the
+        // observer set under a converged filter would move the estimate for
+        // reasons the user did not cause.
+    }
+
+    fun stopSharing() {
+        peerLink = null
+        peerPosition = null
+    }
+
+    val sharing: Boolean get() = peerLink != null
+
     override fun onCleared() {
         stopAll()
+        if (altimeter != 0L) runCatching { NativeCore.destroyAltimeter(altimeter) }
         super.onCleared()
     }
 

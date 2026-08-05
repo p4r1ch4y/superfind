@@ -36,6 +36,13 @@ data class Snapshot(
     val observations: Int,
     /** Model and measurements have become irreconcilable. */
     val diverged: Boolean,
+    /**
+     * Readings contributed by peers observing from their own positions.
+     *
+     * Zero on a solo hunt. Worth showing: it is the difference between an
+     * annulus and a fix, and the user should know which they are looking at.
+     */
+    val remoteObservations: Int = 0,
     /** Per-sector mean RSSI for the radar, null where nothing was sampled. */
     val sectorMeans: List<Double?>,
     /** The user's walked path, oldest first, in metres from the session origin. */
@@ -62,6 +69,7 @@ data class Snapshot(
             totalSamples = 0,
             observations = 0,
             diverged = false,
+            remoteObservations = 0,
             sectorMeans = List(16) { null },
             trail = emptyList(),
         )

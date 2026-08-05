@@ -19,6 +19,15 @@ interface Tracker : AutoCloseable {
     val fusionAvailable: Boolean
 
     fun observeRssi(dbm: Double, source: RssiSource, atSeconds: Double)
+    /** A peer's reading, taken from a known position in the shared frame. */
+    fun observeRssiFrom(
+        dbm: Double,
+        sourceOrdinal: Int,
+        x: Double,
+        y: Double,
+        atSeconds: Double,
+    )
+
     fun observeRange(metres: Double, sourceOrdinal: Int, atSeconds: Double)
     fun observeAngle(bearingRad: Double, sigmaRad: Double, atSeconds: Double)
     fun setHeading(radians: Double, atSeconds: Double)
@@ -48,6 +57,16 @@ private class NativeTracker(private val handle: Long) : Tracker {
 
     override fun observeRssi(dbm: Double, source: RssiSource, atSeconds: Double) {
         NativeCore.observeRssi(handle, dbm, source.ordinal, elapsed(atSeconds))
+    }
+
+    override fun observeRssiFrom(
+        dbm: Double,
+        sourceOrdinal: Int,
+        x: Double,
+        y: Double,
+        atSeconds: Double,
+    ) {
+        NativeCore.observeRssiFrom(handle, dbm, sourceOrdinal, x, y, elapsed(atSeconds))
     }
 
     override fun observeRange(metres: Double, sourceOrdinal: Int, atSeconds: Double) {
@@ -114,6 +133,14 @@ private class DegradedTracker : Tracker {
     }
 
     // Without the filter there is nothing meaningful to do with these.
+    override fun observeRssiFrom(
+        dbm: Double,
+        sourceOrdinal: Int,
+        x: Double,
+        y: Double,
+        atSeconds: Double,
+    ) = Unit
+
     override fun observeRange(metres: Double, sourceOrdinal: Int, atSeconds: Double) = Unit
     override fun observeAngle(bearingRad: Double, sigmaRad: Double, atSeconds: Double) = Unit
 
@@ -290,6 +317,7 @@ object Snapshots {
             totalSamples = v(15).toInt(),
             observations = v(16).toInt(),
             diverged = flag(17),
+            remoteObservations = v(18).toInt(),
             sectorMeans = sectors.ifEmpty { List(16) { null } },
             trail = trail,
         )
