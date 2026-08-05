@@ -11,8 +11,20 @@
 //!
 //! So a single player is started once and raw PCM is streamed into it. Silence
 //! is data too, which sounds absurd until you notice it is what makes the gaps
-//! exact. The cadence then comes from counting samples rather than from sleeping
-//! a thread, and is immune to scheduler jitter.
+//! exact. The cadence comes from counting samples rather than from sleeping a
+//! thread, and is immune to scheduler jitter.
+//!
+//! ## Latency has to be bounded, or nothing is heard
+//!
+//! The first version wrote whatever the pipe would accept. At startup the cue is
+//! silence, so it free-ran and queued roughly *eighteen seconds* of silence into
+//! the player before the first reading arrived — after which every click landed
+//! behind that backlog. Bytes flowed, the player stayed healthy, and the tool was
+//! inaudible.
+//!
+//! Two things prevent it now: the player is asked for a small buffer, and the
+//! writer emits one short chunk at a time from a running sample clock, so it can
+//! never get further ahead than that buffer allows.
 //!
 //! ## Falling back to the terminal bell
 //!
@@ -137,6 +149,11 @@ fn spawn_player() -> Option<Child> {
                 SAMPLE_RATE.to_string(),
                 "-c".into(),
                 "1".into(),
+                // Bounded buffer. Without it the player accepts seconds of audio
+                // and every click arrives that far late; 200 ms is imperceptible
+                // and small enough that the writer cannot run away.
+                "--buffer-time=200000".into(),
+                "--period-time=50000".into(),
                 "-".into(),
             ],
         ),
@@ -146,6 +163,7 @@ fn spawn_player() -> Option<Child> {
                 "--format=s16".into(),
                 format!("--rate={SAMPLE_RATE}"),
                 "--channels=1".into(),
+                "--latency=100ms".into(),
                 "-".into(),
             ],
         ),
@@ -166,44 +184,31 @@ fn spawn_player() -> Option<Child> {
     None
 }
 
-/// Generate the waveform, one click-and-gap at a time.
+/// Generate audio continuously from a sample clock.
+///
+/// Each pass emits one short chunk and works out which samples inside it fall
+/// within a click, from the position of a free-running counter. That keeps the
+/// cadence exact across chunk boundaries, and — because the chunks are short —
+/// stops the writer running further ahead than the player's buffer.
 fn stream_pcm(
     mut sink: impl Write,
     cue: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     volume: f64,
 ) {
-    let click_samples = (SAMPLE_RATE * CLICK_MS / 1000) as usize;
-    let mut buffer: Vec<u8> = Vec::with_capacity(SAMPLE_RATE as usize * 2);
+    // Short enough that a cue change is heard promptly, long enough not to
+    // syscall per millisecond.
+    let chunk = (SAMPLE_RATE / 25) as usize;
+    let click_samples = (SAMPLE_RATE * CLICK_MS / 1000) as u64;
+
+    let mut buffer = vec![0_u8; chunk * 2];
+    // Samples since the last click began. Survives cue changes, so altering the
+    // rhythm never restarts it mid-tick.
+    let mut since_click: u64 = 0;
 
     while running.load(Ordering::Relaxed) {
-        buffer.clear();
-
-        match unpack(cue.load(Ordering::Relaxed)) {
-            None => {
-                // Silence still has to be written, or the player drains and the
-                // next click is late by however long the buffer was.
-                let quiet = (SAMPLE_RATE / 20) as usize;
-                buffer.extend(std::iter::repeat_n(0_u8, quiet * 2));
-            }
-            Some((interval_ms, pitch_hz)) => {
-                let total = (SAMPLE_RATE as u64 * interval_ms as u64 / 1000) as usize;
-                let click = click_samples.min(total);
-
-                for i in 0..click {
-                    let t = i as f64 / SAMPLE_RATE as f64;
-                    // Exponential decay makes it a tick rather than a beep, and
-                    // stops the tail colliding with the next click at speed.
-                    let envelope = (-t * 90.0).exp();
-                    let sample = (t * pitch_hz as f64 * std::f64::consts::TAU).sin()
-                        * envelope
-                        * volume
-                        * i16::MAX as f64;
-                    buffer.extend_from_slice(&(sample as i16).to_le_bytes());
-                }
-                buffer.extend(std::iter::repeat_n(0_u8, (total - click) * 2));
-            }
-        }
+        let current = unpack(cue.load(Ordering::Relaxed));
+        fill_chunk(&mut buffer, chunk, current, volume, click_samples, &mut since_click);
 
         if sink.write_all(&buffer).is_err() {
             // The player exited — usually because audio went away. Stop rather
@@ -211,6 +216,55 @@ fn stream_pcm(
             return;
         }
         let _ = sink.flush();
+    }
+}
+
+/// Render one chunk from the sample clock.
+///
+/// Split out from the streaming loop so it can be tested without a player: the
+/// bug this replaced produced perfectly valid audio that nobody could hear,
+/// because it was queued behind seconds of silence. A test that asserts "the
+/// samples are not all zero" catches the class of fault that stares straight
+/// through a code review.
+fn fill_chunk(
+    buffer: &mut [u8],
+    chunk: usize,
+    cue: Option<(u32, u32)>,
+    volume: f64,
+    click_samples: u64,
+    since_click: &mut u64,
+) {
+    for i in 0..chunk {
+        let sample = match cue {
+            None => {
+                // Silence, and the clock resets so the first click after a gap
+                // lands immediately rather than part-way through.
+                *since_click = 0;
+                0_i16
+            }
+            Some((interval_ms, pitch_hz)) => {
+                let period = (SAMPLE_RATE as u64 * interval_ms as u64 / 1000).max(1);
+                let phase = *since_click % period;
+                *since_click = since_click.wrapping_add(1);
+
+                if phase < click_samples {
+                    let t = phase as f64 / SAMPLE_RATE as f64;
+                    // Exponential decay makes it a tick rather than a beep, and
+                    // stops the tail colliding with the next click.
+                    let envelope = (-t * 90.0).exp();
+                    let value = (t * pitch_hz as f64 * std::f64::consts::TAU).sin()
+                        * envelope
+                        * volume
+                        * i16::MAX as f64;
+                    value as i16
+                } else {
+                    0
+                }
+            }
+        };
+        let bytes = sample.to_le_bytes();
+        buffer[i * 2] = bytes[0];
+        buffer[i * 2 + 1] = bytes[1];
     }
 }
 
@@ -251,6 +305,78 @@ mod tests {
         };
         let packed = (speaker_cue.pitch_hz << 16) | speaker_cue.interval_ms;
         assert_eq!(unpack(packed), Some((350, 880)));
+    }
+
+    /// Render a second of audio and return the samples.
+    fn render(cue: Option<(u32, u32)>) -> Vec<i16> {
+        let chunk = (SAMPLE_RATE / 25) as usize;
+        let click_samples = (SAMPLE_RATE * CLICK_MS / 1000) as u64;
+        let mut buffer = vec![0_u8; chunk * 2];
+        let mut since_click = 0_u64;
+        let mut out = Vec::new();
+        for _ in 0..25 {
+            fill_chunk(&mut buffer, chunk, cue, 0.9, click_samples, &mut since_click);
+            for pair in buffer.chunks_exact(2) {
+                out.push(i16::from_le_bytes([pair[0], pair[1]]));
+            }
+        }
+        out
+    }
+
+    /// The regression that matters: audio that is generated, accepted by the
+    /// player, and completely inaudible.
+    #[test]
+    fn a_live_cue_produces_audible_samples() {
+        let samples = render(Some((200, 880)));
+        let loudest = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+        assert!(
+            loudest > i16::MAX as u16 / 4,
+            "the click should be loud; peak was {loudest}"
+        );
+    }
+
+    #[test]
+    fn silence_is_actually_silent() {
+        assert!(render(None).iter().all(|s| *s == 0));
+    }
+
+    /// Cadence must come out of the sample clock, not out of how often the
+    /// thread happened to be scheduled.
+    #[test]
+    fn clicks_land_at_the_requested_interval() {
+        let interval_ms = 200_u32;
+        let samples = render(Some((interval_ms, 880)));
+
+        // Onsets: a non-zero sample whose predecessor was silent.
+        let onsets: Vec<usize> = samples
+            .windows(2)
+            .enumerate()
+            .filter(|(_, w)| w[0] == 0 && w[1] != 0)
+            .map(|(i, _)| i + 1)
+            .collect();
+        assert!(onsets.len() >= 3, "expected several clicks, got {}", onsets.len());
+
+        let expected = (SAMPLE_RATE as u64 * interval_ms as u64 / 1000) as usize;
+        for pair in onsets.windows(2) {
+            let gap = pair[1] - pair[0];
+            let drift = (gap as i64 - expected as i64).abs();
+            assert!(drift < 40, "gap {gap} drifted from {expected}");
+        }
+    }
+
+    #[test]
+    fn a_faster_cue_really_is_faster() {
+        let slow = render(Some((400, 440)));
+        let fast = render(Some((100, 1320)));
+        let count = |s: &[i16]| {
+            s.windows(2).filter(|w| w[0] == 0 && w[1] != 0).count()
+        };
+        assert!(
+            count(&fast) > count(&slow),
+            "fast {} should exceed slow {}",
+            count(&fast),
+            count(&slow)
+        );
     }
 
     /// A cue must never pack to zero, or it would be indistinguishable from
