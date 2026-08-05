@@ -37,25 +37,48 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Name the artefact after the tag
+      # The Linux CLI ships too: it shares the fusion core with the app, and is
+      # the only front end where ground truth is exact enough to validate it.
+      - name: Build the CLI
+        run: cargo build --release -p superfind-cli
+
+      - name: Collect artefacts
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk \
              "dist/superfind-${GITHUB_REF_NAME}.apk"
-          (cd dist && sha256sum *.apk > checksums.txt)
+          cp target/release/superfind \
+             "dist/superfind-${GITHUB_REF_NAME}-linux-x86_64"
+          (cd dist && sha256sum superfind-* > checksums.txt)
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           NOTES: |
-            Debug-signed APK. Android 6.0 (API 23) and above, all ABIs.
+            ### Android
 
-            Unsigned for release, so Android will warn on install — this is a
-            private build, not a store release. Enable installation from
-            unknown sources to proceed.
+            `superfind-${{ github.ref_name }}.apk` — Android 6.0 (API 23) and
+            above, all ABIs, with the Rust fusion core built in.
+
+            Debug-signed, so Android warns on install: this is a private build,
+            not a store release. Allow installation from unknown sources to
+            proceed.
 
             Needs Bluetooth and nearby-devices permission. Location is never
-            requested on Android 12+.
+            requested on Android 12 and later.
+
+            ### Linux
+
+            `superfind-${{ github.ref_name }}-linux-x86_64` — the CLI. Needs
+            `bluetoothd` running and an adapter powered on; no root required.
+
+            ```sh
+            chmod +x superfind-*-linux-x86_64
+            ./superfind-*-linux-x86_64            # survey
+            ./superfind-*-linux-x86_64 <name>     # hunt one device
+            ```
+
+            Verify either download against `checksums.txt`.
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
