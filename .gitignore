@@ -64,6 +64,13 @@ secrets/
 .DS_Store
 Thumbs.db
 
+# Local working notes. `*.local.*` rather than one filename, so a scratch file
+# can be started without editing this list first — the friction is what stops
+# half-formed notes ending up in a commit.
+*.local.md
+*.local.txt
+/TASKS.local.md
+
 # Scratch from on-device testing
 *.log
 /screenshots-scratch/
