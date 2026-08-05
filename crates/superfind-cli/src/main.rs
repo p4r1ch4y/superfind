@@ -200,22 +200,32 @@ async fn list(scanner: &ble::Scanner) -> Result<()> {
 
 async fn survey(scanner: &ble::Scanner, style: &ui::Style) -> Result<()> {
     let mut adverts = scanner.adverts().await?;
-    let mut seen: HashMap<String, (String, i16, Instant, Option<i16>)> = HashMap::new();
+    let mut seen: HashMap<String, (ui::SurveyRow, Instant)> = HashMap::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(500));
 
     loop {
         tokio::select! {
             Some(a) = adverts.recv() => {
-                seen.insert(a.path.clone(), (a.label().to_string(), a.rssi, a.at, a.tx_power));
+                seen.insert(
+                    a.path.clone(),
+                    (
+                        ui::SurveyRow {
+                            label: a.label(),
+                            address: a.address.clone(),
+                            rssi: a.rssi,
+                            tx_power: a.tx_power,
+                            randomised: a.randomised_address(),
+                        },
+                        a.at,
+                    ),
+                );
             }
             _ = ticker.tick() => {
                 // Devices go quiet; drop them rather than show a stale list.
-                seen.retain(|_, (_, _, at, _)| at.elapsed() < Duration::from_secs(20));
-                let mut rows: Vec<ui::SurveyRow> = seen
-                    .values()
-                    .map(|(l, r, _, tx)| (l.clone(), *r, *tx))
-                    .collect();
-                rows.sort_by_key(|(_, r, _)| std::cmp::Reverse(*r));
+                seen.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(20));
+                let mut rows: Vec<ui::SurveyRow> =
+                    seen.values().map(|(row, _)| row.clone()).collect();
+                rows.sort_by_key(|row| std::cmp::Reverse(row.rssi));
                 let adapter = format!("{} ({})", scanner.adapter_name(), scanner.adapter_address());
                 print!("{}", ui::render_survey(style, &adapter, &rows));
                 std::io::stdout().flush().ok();

@@ -204,14 +204,21 @@ pub fn render_hunt(
     // inferred, and the user is entitled to know which is which.
     out.push('\n');
     match &s.fix {
-        Some(fix) if s.observations > 4 => {
+        // Before the user has walked, the posterior is an annulus centred on
+        // them — and the mean of a ring is its centre, so the distance comes out
+        // near zero however far the device actually is. It is arithmetically
+        // right and completely misleading, so it is withheld until the
+        // uncertainty is smaller than the distance it qualifies.
+        Some(fix) if s.observations > 4 && fix.ellipse.semi_major < fix.distance_m => {
             let _ = writeln!(
                 out,
-                "{MARGIN}{}  {:.1} m  {} {:.0}%",
+                "{MARGIN}{}  {:.1} m  {} {:.1} m",
                 style.dim("estimate"),
                 fix.distance_m,
-                style.dim("± ellipse"),
-                fix.confidence * 100.0
+                // A span, not a percentage: "give or take 4 m" is actionable,
+                // "62% confident" is not.
+                style.dim("give or take"),
+                fix.ellipse.semi_major
             );
             let _ = writeln!(
                 out,
@@ -219,6 +226,20 @@ pub fn render_hunt(
                 style.dim("        "),
                 fix.ellipse.semi_major * 2.0,
                 fix.ellipse.semi_minor * 2.0
+            );
+        }
+        Some(fix) if s.observations > 4 => {
+            let _ = writeln!(
+                out,
+                "{MARGIN}{}  {}",
+                style.dim("estimate"),
+                style.dim("not yet — walk a dogleg to pin it down")
+            );
+            let _ = writeln!(
+                out,
+                "{MARGIN}{}  {}",
+                style.dim("        "),
+                style.dim(&format!("uncertainty ± {:.0} m", fix.ellipse.semi_major))
             );
         }
         _ => {
@@ -320,7 +341,17 @@ pub const CONTROLS: &str = concat!(
 );
 
 /// One row in the survey: label, RSSI, and the TX power it advertises if any.
-pub type SurveyRow = (String, i16, Option<i16>);
+/// One line of the survey.
+#[derive(Debug, Clone)]
+pub struct SurveyRow {
+    /// Name, or what the advertisement implies, or the address.
+    pub label: String,
+    pub address: String,
+    pub rssi: i16,
+    pub tx_power: Option<i16>,
+    /// The address rotates, so it identifies nothing across sessions.
+    pub randomised: bool,
+}
 
 pub fn render_survey(style: &Style, adapter: &str, devices: &[SurveyRow]) -> String {
     let mut out = String::with_capacity(2048);
@@ -341,23 +372,30 @@ pub fn render_survey(style: &Style, adapter: &str, devices: &[SurveyRow]) -> Str
         let _ = writeln!(out, "  (nothing yet — give it a few seconds)");
     }
 
-    for (i, (label, rssi, tx_power)) in devices.iter().enumerate().take(16) {
-        let band = Proximity::of(*rssi as f64);
+    for (i, row) in devices.iter().enumerate().take(16) {
+        let band = Proximity::of(row.rssi as f64);
         let _ = writeln!(
             out,
             "{:>2}. {} {:>4} dBm  {:<22} {}",
             i + 1,
-            style.wrap(&bar(signal_fraction(*rssi as f64), 24), band_tone(band)),
-            rssi,
+            style.wrap(&bar(signal_fraction(row.rssi as f64), 24), band_tone(band)),
+            row.rssi,
             band.label(),
             // A device that advertises TX power hands us the calibration
             // reference for free; worth flagging where it happens.
-            match tx_power {
+            match row.tx_power {
                 Some(tx) => format!("tx {tx} dBm"),
                 None => String::new(),
             }
         );
-        let _ = writeln!(out, "    {label}");
+        // The address always appears under the label: it is what identifies the
+        // device to every other tool, even when it is the label itself.
+        let mut detail = row.address.clone();
+        if row.randomised {
+            // Saying so beats presenting rotating hex as though it were a name.
+            detail.push_str("  (randomised address)");
+        }
+        let _ = writeln!(out, "    {}  {}", row.label, style.dim(&detail));
     }
 
     let _ = writeln!(out, "{}", "-".repeat(78));
@@ -366,7 +404,7 @@ pub fn render_survey(style: &Style, adapter: &str, devices: &[SurveyRow]) -> Str
         "{}",
         style.dim(&format!(
             " {} of {} advertise TX power.  Track one with: superfind <name>  ·  Ctrl-C",
-            devices.iter().filter(|(_, _, tx)| tx.is_some()).count(),
+            devices.iter().filter(|r| r.tx_power.is_some()).count(),
             devices.len()
         ))
     );

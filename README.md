@@ -9,7 +9,7 @@
 A sensor-fusion core in Rust, an Android app, and a Linux CLI — all steering by
 the same filter.
 
-[![Tests](https://img.shields.io/badge/tests-105%20passing-success.svg)](#build-and-run)
+[![Tests](https://img.shields.io/badge/tests-138%20passing-success.svg)](#build-and-run)
 [![Android](https://img.shields.io/badge/Android-6.0%2B-3DDC84.svg)](android/)
 [![Rust core](https://img.shields.io/badge/core-Rust%2C%20zero%20deps-B7410E.svg)](crates/superfind-core)
 [![No INTERNET permission](https://img.shields.io/badge/INTERNET%20permission-none-success.svg)](#privacy)
@@ -61,6 +61,23 @@ git tag v0.1.0 && git push origin v0.1.0
 The APK is debug-signed, so Android warns on install — this is a private build,
 not a store release. F-Droid and Play Store packaging comes later, and will need
 a real signing key held outside this repository.
+
+## The Linux CLI
+
+<div align="center">
+
+<img src="docs/images/cli-survey.png" width="440" alt="The CLI survey, listing nearby devices by what they broadcast">&nbsp;
+<img src="docs/images/cli-hunt.png" width="440" alt="CLI hunt mode, with a block-font signal readout and an honest estimate">
+
+</div>
+
+Same fusion core as the app, same honesty. The survey describes devices by what
+they advertise rather than by a rotating address; hunt mode shows the reading in
+a block font legible across a room, and withholds a distance it has not earned.
+
+Movement is typed rather than sensed, because a laptop has no compass or step
+counter — which turns out to be an advantage for validation: the ground truth is
+*exact*, so any error belongs to the filter rather than to a noisy pedometer.
 
 ## Build and run
 

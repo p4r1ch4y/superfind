@@ -27,6 +27,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
+use superfind_core::{short_uuid, DeviceIdentity};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, MatchRule, MessageStream};
 
@@ -47,14 +48,29 @@ pub struct Advert {
     /// parameter `superfind --calibrate` spends a minute measuring. Fast Pair
     /// and FMDN beacons carry it; most phones and cheap tags do not.
     pub tx_power: Option<i16>,
+    /// What the advertisement implies the device is, when it broadcasts no name.
+    pub identity: DeviceIdentity,
     pub at: Instant,
 }
 
 impl Advert {
-    /// What to show the user: the name if BlueZ has learned one, else the
-    /// address.
-    pub fn label(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.address)
+    /// What to show the user.
+    ///
+    /// Falls through the broadcast name, then what the advertisement implies —
+    /// vendor and service — and only then the address, which for a rotating
+    /// private address identifies nothing anyway.
+    pub fn label(&self) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
+        self.identity
+            .label()
+            .unwrap_or_else(|| self.address.clone())
+    }
+
+    /// True when the address rotates, so it is not an identity.
+    pub fn randomised_address(&self) -> bool {
+        superfind_core::is_randomised_address(&self.address)
     }
 
     pub fn matches(&self, query: &str) -> bool {
@@ -74,6 +90,8 @@ pub struct DeviceRecord {
     pub path: String,
     pub address: String,
     pub name: Option<String>,
+    /// What the advertisement implies, for devices that broadcast no name.
+    pub identity: DeviceIdentity,
     pub rssi: Option<i16>,
     pub connected: bool,
     pub paired: bool,
@@ -213,10 +231,13 @@ impl Scanner {
             let Some(address) = prop_string(props, "Address") else {
                 continue;
             };
+            let name = broadcast_name(props, &address);
+            let identity = identity_from(props);
             out.push(DeviceRecord {
                 path: path.as_str().to_string(),
                 address,
-                name: prop_string(props, "Name").or_else(|| prop_string(props, "Alias")),
+                name,
+                identity,
                 rssi: prop_i16(props, "RSSI"),
                 connected: prop_bool(props, "Connected").unwrap_or(false),
                 paired: prop_bool(props, "Paired").unwrap_or(false),
@@ -235,9 +256,21 @@ impl Scanner {
 
         // Seed the identity cache so a PropertiesChanged carrying only RSSI can
         // still be attributed to an address and name.
-        let mut known: HashMap<String, (String, Option<String>)> = HashMap::new();
+        let mut known: HashMap<String, CachedDevice> = HashMap::new();
         for d in self.devices().await? {
-            known.insert(d.path.clone(), (d.address.clone(), d.name.clone()));
+            known.insert(
+                d.path.clone(),
+                CachedDevice {
+                    address: d.address.clone(),
+                    name: d.name.clone(),
+                    // Seeded from BlueZ's accumulated properties, not left
+                    // empty. Most nearby devices are already known to BlueZ, so
+                    // InterfacesAdded never fires for them and the subsequent
+                    // PropertiesChanged carries only RSSI — leaving identity to
+                    // arrive from a live packet would mean it never arrives.
+                    identity: d.identity.clone(),
+                },
+            );
         }
 
         let added_rule = MatchRule::builder()
@@ -298,7 +331,7 @@ impl Scanner {
 fn parse_interfaces_added(
     msg: &zbus::Message,
     prefix: &str,
-    known: &mut HashMap<String, (String, Option<String>)>,
+    known: &mut HashMap<String, CachedDevice>,
 ) -> Option<Advert> {
     let body = msg.body();
     let (path, ifaces): (OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>) =
@@ -308,8 +341,16 @@ fn parse_interfaces_added(
     }
     let props = ifaces.get("org.bluez.Device1")?;
     let address = prop_string(props, "Address")?;
-    let name = prop_string(props, "Name").or_else(|| prop_string(props, "Alias"));
-    known.insert(path.as_str().to_string(), (address.clone(), name.clone()));
+    let name = broadcast_name(props, &address);
+    let identity = identity_from(props);
+    known.insert(
+        path.as_str().to_string(),
+        CachedDevice {
+            address: address.clone(),
+            name: name.clone(),
+            identity: identity.clone(),
+        },
+    );
 
     Some(Advert {
         path: path.as_str().to_string(),
@@ -317,6 +358,7 @@ fn parse_interfaces_added(
         name,
         rssi: prop_i16(props, "RSSI")?,
         tx_power: prop_i16(props, "TxPower"),
+        identity,
         at: Instant::now(),
     })
 }
@@ -324,7 +366,7 @@ fn parse_interfaces_added(
 fn parse_properties_changed(
     msg: &zbus::Message,
     prefix: &str,
-    known: &mut HashMap<String, (String, Option<String>)>,
+    known: &mut HashMap<String, CachedDevice>,
 ) -> Option<Advert> {
     let path = msg.header().path()?.as_str().to_string();
     if !path.starts_with(prefix) {
@@ -340,29 +382,35 @@ fn parse_properties_changed(
 
     // Keep the identity cache current: names often arrive in a later packet
     // than the first RSSI.
-    let entry = known
-        .entry(path.clone())
-        .or_insert_with(|| (String::new(), None));
+    let entry = known.entry(path.clone()).or_default();
     if let Some(address) = prop_string(&changed, "Address") {
-        entry.0 = address;
+        entry.address = address;
     }
-    if let Some(name) = prop_string(&changed, "Name").or_else(|| prop_string(&changed, "Alias")) {
-        entry.1 = Some(name);
+    if let Some(name) = broadcast_name(&changed, &entry.address) {
+        entry.name = Some(name);
+    }
+    // Manufacturer data and service UUIDs arrive in their own packets, often
+    // later than the first RSSI, so they are merged in rather than replacing
+    // what is already known.
+    let fresh = identity_from(&changed);
+    if !fresh.is_empty() {
+        entry.identity = fresh;
     }
 
     let rssi = prop_i16(&changed, "RSSI")?;
     let tx_power = prop_i16(&changed, "TxPower");
-    let (address, name) = entry.clone();
-    if address.is_empty() {
+    let cached = entry.clone();
+    if cached.address.is_empty() {
         return None;
     }
 
     Some(Advert {
         path,
-        address,
-        name,
+        address: cached.address,
+        name: cached.name,
         rssi,
         tx_power,
+        identity: cached.identity,
         at: Instant::now(),
     })
 }
@@ -417,6 +465,56 @@ fn short_name(path: &OwnedObjectPath) -> String {
         .to_string()
 }
 
+/// What BlueZ has told us about one device so far, accumulated across packets.
+#[derive(Debug, Clone, Default)]
+struct CachedDevice {
+    address: String,
+    name: Option<String>,
+    identity: DeviceIdentity,
+}
+
+/// Read `ManufacturerData` and `UUIDs` and interpret them.
+///
+/// Everything here is best-effort: a device that sends malformed data should
+/// cost us a label, never an advertisement.
+fn identity_from(props: &HashMap<String, OwnedValue>) -> DeviceIdentity {
+    let manufacturer: Vec<(u16, Vec<u8>)> = props
+        .get("ManufacturerData")
+        .and_then(|v| HashMap::<u16, OwnedValue>::try_from(v.clone()).ok())
+        .map(|map| {
+            map.into_iter()
+                .filter_map(|(id, payload)| {
+                    Vec::<u8>::try_from(payload).ok().map(|bytes| (id, bytes))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let uuids: Vec<u16> = props
+        .get("UUIDs")
+        .and_then(|v| Vec::<String>::try_from(v.clone()).ok())
+        .map(|list| list.iter().filter_map(|u| short_uuid(u)).collect())
+        .unwrap_or_default();
+
+    DeviceIdentity::from_advert(&manufacturer, &uuids)
+}
+
+/// The device's real broadcast name, if it has one.
+///
+/// BlueZ falls back to setting `Alias` to the address with dashes when a device
+/// has never announced a name — so `Alias` alone would hand back
+/// `6A-26-E3-DF-DD-E7` and, being non-empty, it would beat anything the
+/// advertisement implies. A name that is merely the address is worse than no
+/// name, because it displaces a real description.
+fn broadcast_name(props: &HashMap<String, OwnedValue>, address: &str) -> Option<String> {
+    let candidate = prop_string(props, "Name").or_else(|| prop_string(props, "Alias"))?;
+    let normalise = |s: &str| s.replace(['-', ':'], "").to_lowercase();
+    if normalise(&candidate) == normalise(address) {
+        return None;
+    }
+    Some(candidate)
+}
+
 fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     match props.get(key)?.downcast_ref::<zbus::zvariant::Str>() {
         Ok(s) => Some(s.as_str().to_string()),
@@ -443,6 +541,7 @@ mod tests {
             name: name.map(str::to_string),
             rssi: -60,
             tx_power: None,
+            identity: DeviceIdentity::default(),
             at: Instant::now(),
         }
     }

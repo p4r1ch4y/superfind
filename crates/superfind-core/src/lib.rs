@@ -54,6 +54,7 @@
 //! - [`filter`] — the particle filter over target position
 //! - [`bearing`] — direction inferred from a swept RSSI aperture
 //! - [`capability`] — what a given device can do, and what may be promised
+//! - [`identity`] — what an advertisement says a device is, when it has no name
 //! - [`tracker`] — the facade, and the immutable snapshot a UI renders
 //! - [`geom`], [`rng`], [`time`] — primitives
 
@@ -64,6 +65,7 @@ pub mod bearing;
 pub mod capability;
 pub mod filter;
 pub mod geom;
+pub mod identity;
 pub mod measurement;
 pub mod motion;
 pub mod pathloss;
@@ -75,6 +77,7 @@ pub use bearing::{BearingEstimate, SyntheticAperture};
 pub use capability::{BearingQuality, Capabilities, Tier};
 pub use filter::{Fix, FilterConfig, ParticleFilter};
 pub use geom::{to_degrees, to_radians, Covariance2, Ellipse, Point2};
+pub use identity::{is_randomised_address, short_uuid, DeviceIdentity};
 pub use measurement::{Measurement, RangeSource, RssiSource};
 pub use motion::{DeadReckoner, Pose, StrideModel, TrailPoint};
 pub use pathloss::PathLoss;
