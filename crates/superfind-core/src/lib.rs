@@ -55,6 +55,8 @@
 //! - [`bearing`] — direction inferred from a swept RSSI aperture
 //! - [`capability`] — what a given device can do, and what may be promised
 //! - [`identity`] — what an advertisement says a device is, when it has no name
+//! - [`peer`] — observations shared between devices hunting the same thing
+//! - [`following`] — devices that have been travelling with you, per DULT
 //! - [`tracker`] — the facade, and the immutable snapshot a UI renders
 //! - [`geom`], [`rng`], [`time`] — primitives
 
@@ -65,10 +67,12 @@ pub mod bearing;
 pub mod capability;
 pub mod filter;
 pub mod geom;
+pub mod following;
 pub mod identity;
 pub mod measurement;
 pub mod motion;
 pub mod pathloss;
+pub mod peer;
 pub mod rng;
 pub mod time;
 pub mod tracker;
@@ -77,10 +81,12 @@ pub use bearing::{BearingEstimate, SyntheticAperture};
 pub use capability::{BearingQuality, Capabilities, Tier};
 pub use filter::{Fix, FilterConfig, ParticleFilter};
 pub use geom::{to_degrees, to_radians, Covariance2, Ellipse, Point2};
+pub use following::{FollowPolicy, FollowVerdict, FollowWatch};
 pub use identity::{is_randomised_address, short_uuid, DeviceIdentity};
 pub use measurement::{Measurement, RangeSource, RssiSource};
 pub use motion::{DeadReckoner, Pose, StrideModel, TrailPoint};
 pub use pathloss::PathLoss;
+pub use peer::{Anchor, PeerReport};
 pub use rng::Rng;
 pub use time::Timestamp;
 pub use tracker::{Proximity, Snapshot, Tracker, TrackerConfig, Trend};
@@ -184,6 +190,194 @@ mod integration {
             "swept bearing was {bearing_error} deg off"
         );
         assert!(!s.diverged);
+    }
+
+    /// Two observers collapse the annulus that one, standing still, never can.
+    ///
+    /// A lone observer feeding the filter a hundred readings from one spot
+    /// learns the *radius* precisely and the *direction* not at all, so its
+    /// ellipse stays as wide as the ring is across. A second pair of eyes a few
+    /// metres away intersects two rings and the uncertainty collapses — with
+    /// nobody walking anywhere.
+    ///
+    /// What two observers do *not* buy is a unique answer: see
+    /// [`two_observers_still_leave_a_mirror_ambiguity`].
+    #[test]
+    fn a_second_observer_shrinks_the_posterior() {
+        let truth = Point2::new(9.0, 5.0);
+        let model = PathLoss::default();
+        let alice = Point2::new(0.0, 0.0);
+        let bob = Point2::new(12.0, 0.0);
+
+        let reading = |from: Point2, rng: &mut Rng, clock: f64| Measurement::Rssi {
+            dbm: model.expected_rssi(from.distance_to(truth)) + rng.normal_with(0.0, 3.0),
+            source: RssiSource::ConnectedLink,
+            at: Timestamp(clock),
+        };
+
+        let mut solo = Tracker::default();
+        let mut rng = Rng::seeded(77);
+        let mut clock = 0.0;
+        for _ in 0..240 {
+            clock += 0.1;
+            solo.observe(reading(alice, &mut rng, clock));
+        }
+
+        let mut paired = Tracker::default();
+        let mut rng = Rng::seeded(77);
+        let mut clock = 0.0;
+        for _ in 0..240 {
+            clock += 0.1;
+            paired.observe(reading(alice, &mut rng, clock));
+            paired.observe_from(reading(bob, &mut rng, clock), bob);
+        }
+
+        let solo_fix = solo.snapshot(Timestamp(clock)).fix.expect("solo fix");
+        let paired_fix = paired.snapshot(Timestamp(clock)).fix.expect("paired fix");
+
+        // The ellipse is the honest measure here, not the point estimate: it is
+        // what the UI draws and what tells the user how much to trust it.
+        // Measured, this is roughly 19 m down to 12 m.
+        assert!(
+            paired_fix.ellipse.semi_major < solo_fix.ellipse.semi_major * 0.75,
+            "uncertainty should shrink: {:.1} m vs {:.1} m",
+            paired_fix.ellipse.semi_major,
+            solo_fix.ellipse.semi_major
+        );
+        // But it cannot shrink far, and the reason is worth pinning down: the
+        // posterior is now two lobes ten metres apart, and any ellipse covering
+        // both is at least that wide. Precision in the ranges cannot help — only
+        // breaking the symmetry can, which is what the next two tests are about.
+        assert!(
+            paired_fix.ellipse.semi_major > 5.0,
+            "the mirror lobes floor the ellipse; got {:.1} m",
+            paired_fix.ellipse.semi_major
+        );
+        assert_eq!(paired.remote_observations(), 240);
+        assert_eq!(solo.remote_observations(), 0);
+    }
+
+    /// Two observers leave the target indistinguishable from its reflection in
+    /// the line joining them.
+    ///
+    /// Two ranges intersect two circles, and two circles meet at two points. The
+    /// ambiguity is geometric, so no amount of precision or averaging removes
+    /// it — and the filter's honest response is a posterior straddling both
+    /// lobes, whose *mean* sits in the empty space between them. That is why the
+    /// point estimate can be metres out while the ellipse is small.
+    ///
+    /// The cure is a third observer off the line, or one observer moving off it.
+    /// This is the same trap as `a_straight_line_walk_leaves_a_mirror_ambiguity`,
+    /// arriving by a different route.
+    #[test]
+    fn two_observers_still_leave_a_mirror_ambiguity() {
+        let truth = Point2::new(9.0, 5.0);
+        let mirrored = Point2::new(9.0, -5.0);
+        let model = PathLoss::default();
+        let alice = Point2::new(0.0, 0.0);
+        let bob = Point2::new(12.0, 0.0);
+
+        // The two candidates are equidistant from both observers, which is
+        // precisely why signal strength cannot separate them.
+        assert!((alice.distance_to(truth) - alice.distance_to(mirrored)).abs() < 1e-9);
+        assert!((bob.distance_to(truth) - bob.distance_to(mirrored)).abs() < 1e-9);
+
+        let mut t = Tracker::default();
+        let mut rng = Rng::seeded(77);
+        let mut clock = 0.0;
+        for _ in 0..240 {
+            clock += 0.1;
+            let reading = |from: Point2, rng: &mut Rng| Measurement::Rssi {
+                dbm: model.expected_rssi(from.distance_to(truth)) + rng.normal_with(0.0, 3.0),
+                source: RssiSource::ConnectedLink,
+                at: Timestamp(clock),
+            };
+            t.observe(reading(alice, &mut rng));
+            t.observe_from(reading(bob, &mut rng), bob);
+        }
+
+        let particles = t.particles();
+        let near = |p: Point2| particles.iter().filter(|q| q.distance_to(p) < 4.0).count();
+        assert!(
+            near(truth) > particles.len() / 10 && near(mirrored) > particles.len() / 10,
+            "both lobes should survive: {} at truth, {} at the mirror, of {}",
+            near(truth),
+            near(mirrored),
+            particles.len()
+        );
+    }
+
+    /// Three observers off a common line resolve it outright.
+    ///
+    /// This is the configuration worth telling users about: two phones and a
+    /// laptop, or two phones and one of them moved a few steps sideways, and the
+    /// device is simply located — no walking a dogleg, no waiting for a bearing
+    /// to earn its arrow.
+    #[test]
+    fn three_observers_resolve_the_position_outright() {
+        let truth = Point2::new(9.0, 5.0);
+        let model = PathLoss::default();
+        let observers = [
+            Point2::new(0.0, 0.0),
+            Point2::new(12.0, 0.0),
+            // Off the line joining the other two — that is what breaks the tie.
+            Point2::new(4.0, 9.0),
+        ];
+
+        let mut t = Tracker::default();
+        let mut rng = Rng::seeded(2027);
+        let mut clock = 0.0;
+        for _ in 0..200 {
+            clock += 0.1;
+            for from in observers {
+                let m = Measurement::Rssi {
+                    dbm: model.expected_rssi(from.distance_to(truth))
+                        + rng.normal_with(0.0, 3.0),
+                    source: RssiSource::ConnectedLink,
+                    at: Timestamp(clock),
+                };
+                t.observe_from(m, from);
+            }
+        }
+
+        let fix = t.snapshot(Timestamp(clock)).fix.expect("a fix");
+        let error = fix.position.distance_to(truth);
+        assert!(
+            error < 2.5,
+            "three observers should locate to a couple of metres, got {error:.1} m \
+             (estimate {:?}, truth {truth:?})",
+            fix.position
+        );
+        assert!(
+            fix.ellipse.semi_major < 4.0,
+            "and say so: ellipse was {:.1} m",
+            fix.ellipse.semi_major
+        );
+    }
+
+    /// A peer's readings must not disturb what the local user sees. The number
+    /// on screen is *this* phone's signal, and blending in a peer's would make
+    /// it jump for reasons the person holding it cannot observe.
+    #[test]
+    fn a_peers_readings_do_not_move_the_local_display() {
+        let mut t = Tracker::default();
+        t.observe(Measurement::Rssi {
+            dbm: -55.0,
+            source: RssiSource::ConnectedLink,
+            at: Timestamp(0.0),
+        });
+        t.observe_from(
+            Measurement::Rssi {
+                dbm: -95.0,
+                source: RssiSource::ConnectedLink,
+                at: Timestamp(0.1),
+            },
+            Point2::new(20.0, 0.0),
+        );
+
+        let s = t.snapshot(Timestamp(0.2));
+        assert_eq!(s.rssi_dbm, Some(-55.0), "display follows the local reading");
+        assert_eq!(s.total_samples, 1, "peer samples stay out of the window");
     }
 
     /// Adding a ranging radio must strictly help. If a UWB-equipped phone did

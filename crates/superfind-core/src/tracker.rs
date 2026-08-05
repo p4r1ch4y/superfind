@@ -145,6 +145,8 @@ pub struct Tracker {
     motion: DeadReckoner,
     history: Vec<Sample>,
     last_predict: Timestamp,
+    /// How many observations arrived from peers rather than the local user.
+    remote_observations: u32,
 }
 
 impl Default for Tracker {
@@ -164,6 +166,7 @@ impl Tracker {
             motion: DeadReckoner::new(config.stride),
             history: Vec::new(),
             last_predict: Timestamp::ZERO,
+            remote_observations: 0,
             config,
         }
     }
@@ -222,6 +225,26 @@ impl Tracker {
 
     /// Fold in an observation. Returns false if it was rejected as implausible.
     pub fn observe(&mut self, m: Measurement) -> bool {
+        let here = self.motion.position();
+        self.observe_from(m, here)
+    }
+
+    /// Fold in an observation taken from a *known* position that is not the
+    /// user's.
+    ///
+    /// This is what turns the whole thing from a hot-and-cold game into
+    /// trilateration. A single observer's RSSI likelihood is an annulus — "the
+    /// device is somewhere on a ring around me" — and no amount of extra
+    /// readings from that one spot will narrow it, which is why the UI has to
+    /// ask the user to walk a dogleg. Two observers a few metres apart intersect
+    /// their rings and collapse the posterior immediately, standing still.
+    ///
+    /// The caller owns the hard part: `observer` must be expressed in *this
+    /// tracker's* coordinate frame, and establishing that shared frame between
+    /// two phones is a real problem this function does not solve. Anchoring one
+    /// device at the origin, or placing peers by hand, is the honest starting
+    /// point.
+    pub fn observe_from(&mut self, m: Measurement, observer: Point2) -> bool {
         if !m.is_plausible() {
             return false;
         }
@@ -233,16 +256,25 @@ impl Tracker {
             self.last_predict = now;
         }
 
-        let user = self.motion.position();
-        if !self.filter.update(&m, user, &self.config.path_loss) {
+        if !self.filter.update(&m, observer, &self.config.path_loss) {
             return false;
         }
 
+        // Only the local user's readings feed the display window and the
+        // aperture. A peer's signal strength says nothing about which way *this*
+        // phone is pointing, and blending it into the on-screen number would
+        // make the reading jump for reasons the user cannot see.
+        let local = observer == self.motion.position();
         if let Measurement::Rssi { dbm, source, at } = m {
-            self.history.push(Sample { at, dbm, source });
-            // The aperture is fed the raw sample and the heading it was taken
-            // at; body shadowing is the signal it works from.
-            self.aperture.observe(dbm, self.motion.heading());
+            if local {
+                self.history.push(Sample { at, dbm, source });
+                // The aperture is fed the raw sample and the heading it was
+                // taken at; body shadowing is the signal it works from.
+                self.aperture.observe(dbm, self.motion.heading());
+            }
+        }
+        if !local {
+            self.remote_observations = self.remote_observations.saturating_add(1);
         }
 
         self.prune(now);
@@ -254,6 +286,12 @@ impl Tracker {
         self.filter.reset(self.motion.position());
         self.aperture.clear();
         self.history.clear();
+        self.remote_observations = 0;
+    }
+
+    /// Observations contributed by peers. Zero means this is a solo hunt.
+    pub fn remote_observations(&self) -> u32 {
+        self.remote_observations
     }
 
     fn prune(&mut self, now: Timestamp) {
