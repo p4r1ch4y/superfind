@@ -135,6 +135,10 @@ pub struct Snapshot {
     /// Model and measurements have become irreconcilable; the honest UI
     /// response is to say so and offer a reset.
     pub diverged: bool,
+    /// Readings contributed by peers observing from their own positions. Zero
+    /// on a solo hunt. Worth showing: it is the difference between an annulus
+    /// and a fix, and the user should know which one they are looking at.
+    pub remote_observations: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -390,6 +394,7 @@ impl Tracker {
             fix: self.filter.fix(self.motion.position()),
             bearing: self.aperture.estimate(),
             user: self.motion.pose(),
+            remote_observations: self.remote_observations,
             steps: self.motion.steps(),
             distance_walked_m: self.motion.distance_walked(),
             heading_coverage: self.motion.heading_coverage(self.config.bearing_sectors),

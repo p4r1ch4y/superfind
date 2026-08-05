@@ -312,9 +312,9 @@ fn encode(s: &Snapshot, sectors: &[Option<f64>], trail: &[(f64, f64, f64)]) -> V
     out[15] = s.total_samples as f64;
     out[16] = s.observations as f64;
     out[17] = flag(s.diverged);
-    // 18 and 19 are reserved so new scalars can be added without moving the
+    out[18] = s.remote_observations as f64;
+    // 19 stays reserved so another scalar can be added without moving the
     // variable-length tail.
-    out[18] = 0.0;
     out[19] = 0.0;
 
     if let Some(fix) = &s.fix {

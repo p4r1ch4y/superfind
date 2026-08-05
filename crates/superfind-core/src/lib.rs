@@ -57,12 +57,14 @@
 //! - [`identity`] — what an advertisement says a device is, when it has no name
 //! - [`peer`] — observations shared between devices hunting the same thing
 //! - [`following`] — devices that have been travelling with you, per DULT
+//! - [`altitude`] — which floor it is on, from a barometer
 //! - [`tracker`] — the facade, and the immutable snapshot a UI renders
 //! - [`geom`], [`rng`], [`time`] — primitives
 
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
+pub mod altitude;
 pub mod bearing;
 pub mod capability;
 pub mod filter;
@@ -77,6 +79,7 @@ pub mod rng;
 pub mod time;
 pub mod tracker;
 
+pub use altitude::{Altimeter, FloorDelta};
 pub use bearing::{BearingEstimate, SyntheticAperture};
 pub use capability::{BearingQuality, Capabilities, Tier};
 pub use filter::{Fix, FilterConfig, ParticleFilter};

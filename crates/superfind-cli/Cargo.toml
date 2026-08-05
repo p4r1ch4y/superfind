@@ -25,3 +25,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # zbus removes the C toolchain from the picture entirely.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+# For SO_REUSEADDR on the peer socket. Multicast receivers must share a port —
+# two instances on one machine is both a normal test setup and a real use case
+# — and std's UdpSocket cannot set it. Already in the tree via tokio.
+socket2 = "0.5"

@@ -287,12 +287,18 @@ pub fn render_hunt(
         out,
         "{}",
         style.dim(&format!(
-            "{MARGIN}{} in window via {} · {} total · {} steps · {:.0}% swept",
+            "{MARGIN}{} in window via {} · {} total · {} steps · {:.0}% swept{}",
             s.samples_in_window,
             s.rssi_source.map(source_label).unwrap_or("-"),
             s.total_samples,
             s.steps,
-            s.heading_coverage * 100.0
+            s.heading_coverage * 100.0,
+            // Only shown when peers are actually contributing, so a solo hunt
+            // is not cluttered with a permanent zero.
+            match s.remote_observations {
+                0 => String::new(),
+                n => format!(" · {n} from peers"),
+            }
         ))
     );
     let _ = writeln!(

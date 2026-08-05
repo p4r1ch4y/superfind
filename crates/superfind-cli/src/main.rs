@@ -15,6 +15,7 @@
 //! is right before porting it to Android.
 
 mod ble;
+mod peers;
 mod calibration;
 mod ui;
 
@@ -39,6 +40,8 @@ superfind — locate a Bluetooth device by signal strength
   --adapter <hciN>   use a specific adapter (default: the first powered one)
   --step <metres>    distance per keypress in hunt mode (default: 1.0)
   --no-calibration   ignore any saved calibration, use the built-in priors
+  --share <session>  pool readings with other devices hunting the same thing
+  --at <x,y>         where this device is, in metres, in the shared frame
   -h, --help         this message
 
 Calibration is stored in ~/.config/superfind/calibration.json and is used
@@ -53,6 +56,26 @@ struct Args {
     calibrate: bool,
     no_calibration: bool,
     step_m: f64,
+    /// Session name for sharing observations with other devices.
+    share: Option<String>,
+    /// This device's position in the shared frame, in metres.
+    at: Option<superfind_core::Point2>,
+}
+
+/// A name for this device in peer reports.
+///
+/// The hostname is what a person recognises on their own network, but it is not
+/// unique *per process* — and two instances on one machine is a configuration
+/// worth supporting. Since a peer discards its own packets by matching this
+/// name, a shared name would make each instance discard the other's readings
+/// too, and the whole thing would silently do nothing. Hence the pid.
+fn peer_name() -> String {
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "peer".to_string());
+    format!("{host}-{}", std::process::id())
 }
 
 fn parse_args<I: Iterator<Item = String>>(it: I) -> Result<Args> {
@@ -63,6 +86,8 @@ fn parse_args<I: Iterator<Item = String>>(it: I) -> Result<Args> {
         calibrate: false,
         no_calibration: false,
         step_m: 1.0,
+        share: None,
+        at: None,
     };
     let mut it = it.peekable();
 
@@ -75,6 +100,13 @@ fn parse_args<I: Iterator<Item = String>>(it: I) -> Result<Args> {
             "--list" => args.list = true,
             "--calibrate" => args.calibrate = true,
             "--no-calibration" => args.no_calibration = true,
+            "--share" => {
+                args.share = Some(it.next().context("--share needs a session name")?)
+            }
+            "--at" => {
+                let raw = it.next().context("--at needs a position, e.g. --at 4,2.5")?;
+                args.at = Some(peers::parse_position(&raw)?);
+            }
             "--adapter" => {
                 args.adapter = Some(it.next().context("--adapter needs a value, e.g. hci0")?)
             }
@@ -129,7 +161,37 @@ async fn run() -> Result<()> {
         (true, None) => Err(anyhow::anyhow!(
             "--calibrate needs a device name or address to calibrate against"
         )),
-        (false, Some(query)) => hunt(&scanner, &style, &query, args.step_m, args.no_calibration).await,
+        (false, Some(query)) => {
+            // Sharing is opt-in: these packets carry the hunted address and
+            // rough positions, and anything on the network can read them.
+            let link = match &args.share {
+                Some(session) => {
+                    let name = peer_name();
+                    let link = peers::PeerLink::open(session, &name, args.at)?;
+                    match args.at {
+                        Some(at) => eprintln!(
+                            "sharing session '{session}' as '{name}' at {:.1},{:.1}",
+                            at.x, at.y
+                        ),
+                        None => eprintln!(
+                            "sharing session '{session}' as '{name}' — no --at given, so this \n\
+                             device will fuse peers' readings but contribute none of its own"
+                        ),
+                    }
+                    Some(link)
+                }
+                None => None,
+            };
+            hunt(
+                &scanner,
+                &style,
+                &query,
+                args.step_m,
+                args.no_calibration,
+                link,
+            )
+            .await
+        }
         (false, None) => survey(&scanner, &style).await,
     };
 
@@ -364,6 +426,7 @@ async fn hunt(
     query: &str,
     step_m: f64,
     ignore_calibration: bool,
+    link: Option<peers::PeerLink>,
 ) -> Result<()> {
     let mut adverts = scanner.adverts().await?;
     let mut config = TrackerConfig::default();
@@ -408,11 +471,18 @@ async fn hunt(
 
                 // Passively observed advertisements — not a connected link, and
                 // labelled as such so the filter widens its noise accordingly.
+                let now = elapsed(&started);
                 tracker.observe(Measurement::Rssi {
                     dbm: a.rssi as f64,
                     source: RssiSource::Advertisement,
-                    at: elapsed(&started),
+                    at: now,
                 });
+
+                // Pass it on, so peers hunting the same device can intersect
+                // their ring with ours.
+                if let Some(link) = &link {
+                    link.share(&a.address, a.rssi as f64, now.0, peers::RssiKind::Advert);
+                }
             }
 
             Some(Ok(event)) = keys.next() => {
@@ -454,6 +524,15 @@ async fn hunt(
             }
 
             _ = ticker.tick() => {
+                // Peers' readings, folded in at *their* positions. This is what
+                // collapses the annulus without anyone walking.
+                if let Some(link) = &link {
+                    for report in link.drain(&address) {
+                        if let Some(at) = report.at {
+                            tracker.observe_from(report.measurement(), at);
+                        }
+                    }
+                }
                 let snapshot = tracker.snapshot(elapsed(&started));
                 // Raw mode means a bare \n does not imply a carriage return.
                 let frame = ui::render_hunt(style, query, &address, &snapshot, model_source)
