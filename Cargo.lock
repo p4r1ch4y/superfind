@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "superfind-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -710,11 +710,11 @@ dependencies = [
 
 [[package]]
 name = "superfind-core"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "superfind-jni"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "jni",
  "superfind-core",
