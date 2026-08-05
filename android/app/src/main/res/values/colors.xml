@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches Surface in the Compose theme, so there is no flash on launch. -->
+    <color name="window_background">#0E1116</color>
+    <!-- Matches the app's Surface so the icon reads as part of the same thing. -->
+    <color name="ic_launcher_background">#0E1116</color>
+</resources>

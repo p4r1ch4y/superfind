@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Android-8 launchers draw the icon unmasked, so the background is
+     baked in here rather than supplied as a separate layer. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M0,0 h108 v108 h-108 z"
+        android:fillColor="#0E1116" />
+    <path
+        android:pathData="M25,54 a29,29 0 1,0 58,0 a29,29 0 1,0 -58,0"
+        android:strokeColor="#4ADE80"
+        android:strokeWidth="2.5"
+        android:strokeAlpha="0.45" />
+    <path
+        android:pathData="M35,54 a19,19 0 1,0 38,0 a19,19 0 1,0 -38,0"
+        android:strokeColor="#4ADE80"
+        android:strokeWidth="2.5"
+        android:strokeAlpha="0.7" />
+    <path
+        android:pathData="M54,54 L68.5,28.9 A29,29 0 0,1 81.2,44.5 Z"
+        android:fillColor="#4ADE80"
+        android:fillAlpha="0.85" />
+    <path
+        android:pathData="M47.5,54 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0"
+        android:fillColor="#4ADE80" />
+</vector>

@@ -1,0 +1,16 @@
+[package]
+name = "superfind-jni"
+description = "JNI bridge exposing superfind-core to the Android app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "superfind_jni"
+# cdylib only: this is loaded by System.loadLibrary, never linked by Rust.
+crate-type = ["cdylib"]
+
+[dependencies]
+superfind-core = { path = "../superfind-core" }
+jni = "0.21"

@@ -1,0 +1,15 @@
+[package]
+name = "superfind-core"
+description = "Platform-free sensor fusion for locating a radio device: path-loss modelling, particle filtering, synthetic-aperture bearing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately dependency-free. This crate is the product; it must build and be
+# testable anywhere, including inside an Android NDK build and a Flutter FFI
+# bridge, without dragging a transitive tree behind it.
+[dependencies]
+
+[lints.rust]
+missing_debug_implementations = "warn"

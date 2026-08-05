@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/superfind-core", "crates/superfind-cli", "crates/superfind-jni"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/superfind/superfind"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

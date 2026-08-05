@@ -1,19 +1,54 @@
-# You can override the included template(s) by including variable overrides
-# SAST customization: https://docs.gitlab.com/user/application_security/sast/#available-cicd-variables
-# Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure/
-# Dependency Scanning customization: https://docs.gitlab.com/user/application_security/dependency_scanning/dependency_scanning_sbom/#customizing-analyzer-behavior
-# Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
-# Note that environment variables can be set in several places
-# See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+# GitLab's SAST and Secret Detection templates are kept exactly as GitLab
+# generated them, with the project's own build stages added around them.
 stages:
-- test
-- secret-detection
-sast:
-  stage: test
+  - test
+  - build
+  - secret-detection
+
 include:
-- template: Security/SAST.gitlab-ci.yml
-- template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
 variables:
   SECRET_DETECTION_ENABLED: 'true'
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  NDK_VERSION: '27.2.12479018'
+
+sast:
+  stage: test
+
 secret_detection:
   stage: secret-detection
+
+# The fusion core, which is where the behaviour worth testing lives.
+core:
+  stage: test
+  image: rust:1.82
+  cache:
+    key: cargo
+    paths: [.cargo-home, target]
+  script:
+    - rustup component add clippy
+    - cargo test --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+
+apk:
+  stage: build
+  image: ghcr.io/cirruslabs/android-sdk:34
+  cache:
+    key: cargo
+    paths: [.cargo-home, target]
+  before_script:
+    - curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+    - sdkmanager --install "ndk;$NDK_VERSION"
+  script:
+    - export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
+    - ./scripts/build-jni.sh
+    - cd android && ./gradlew assembleDebug --no-daemon
+  artifacts:
+    name: superfind-$CI_COMMIT_REF_SLUG
+    paths:
+      - android/app/build/outputs/apk/debug/*.apk
+    expire_in: 30 days
