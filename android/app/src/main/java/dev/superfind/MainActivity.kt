@@ -33,6 +33,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.superfind.core.NativeCore
 import dev.superfind.radio.Permissions
 import dev.superfind.radio.Tier
+import dev.superfind.ui.CalibrateScreen
+import dev.superfind.ui.CalibrationState
 import dev.superfind.ui.HuntScreen
 import dev.superfind.ui.HuntViewModel
 import dev.superfind.ui.Screen
@@ -90,6 +92,7 @@ private fun App(model: HuntViewModel = viewModel()) {
     val linkSupported by model.linkSupported.collectAsState()
     val floors by model.floors.collectAsState()
     val followers by model.followers.collectAsState()
+    val calibration by model.calibration.collectAsState()
     val soundEnabled by model.soundEnabled.collectAsState()
     val hapticsEnabled by model.hapticsEnabled.collectAsState()
 
@@ -105,6 +108,7 @@ private fun App(model: HuntViewModel = viewModel()) {
     // search because of a reflexive back-press would be infuriating, and the
     // list is where the user would go next anyway.
     BackHandler(enabled = screen is Screen.Hunt) { model.closeHunt() }
+    BackHandler(enabled = screen is Screen.Calibrate) { model.cancelCalibration() }
 
     when (val current = screen) {
         is Screen.Survey -> SurveyScreen(
@@ -115,8 +119,19 @@ private fun App(model: HuntViewModel = viewModel()) {
             limitations = limitations,
             error = error,
             followers = followers,
+            calibrated = model.calibratedAddresses,
             onSelect = { model.startHunt(it.address, it.label) },
+            onCalibrate = { model.startCalibration(it.address, it.label) },
             onHuntAddress = { model.huntAddress(it) },
+        )
+
+        is Screen.Calibrate -> CalibrateScreen(
+            deviceLabel = current.label,
+            state = calibration ?: CalibrationState.Waiting(1.0, 1, 4),
+            onStartStep = { model.collectCalibrationStep() },
+            onSave = { model.saveCalibration(it) },
+            onRetry = { model.retryCalibration() },
+            onCancel = { model.cancelCalibration() },
         )
 
         is Screen.Hunt -> HuntScreen(

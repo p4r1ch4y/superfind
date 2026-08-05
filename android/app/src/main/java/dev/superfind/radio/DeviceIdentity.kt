@@ -36,6 +36,11 @@ data class DeviceIdentity(
     val label: String?
         get() = when {
             name != null -> name
+            // A device advertising Google's company ID *and* a Google service
+            // would otherwise read "Google · Google". Once the vendor has said
+            // it, the service adds nothing.
+            vendor != null && kind != null && vendor.equals(kind, ignoreCase = true) ->
+                "$vendor device"
             vendor != null && kind != null -> "$vendor · $kind"
             kind != null -> kind
             vendor != null -> "$vendor device"

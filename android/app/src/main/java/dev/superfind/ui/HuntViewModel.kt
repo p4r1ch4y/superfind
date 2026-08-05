@@ -3,6 +3,9 @@ package dev.superfind.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.superfind.core.Calibration
+import dev.superfind.core.CalibrationRun
+import dev.superfind.core.CalibrationStore
 import dev.superfind.core.RssiSource
 import dev.superfind.core.Snapshot
 import dev.superfind.core.Tracker
@@ -51,6 +54,7 @@ data class Sighting(
 
 sealed interface Screen {
     data object Survey : Screen
+    data class Calibrate(val address: String, val label: String) : Screen
     data class Hunt(
         val address: String,
         val label: String,
@@ -84,6 +88,7 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
     private val gatt = GattLink(app)
     private val feedback = ProximityFeedback(app)
     private val settings = Settings(app)
+    private val calibrations = CalibrationStore(app)
 
     init {
         // Apply the restored choices to the player, not merely to the UI state —
@@ -117,6 +122,15 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _followers = MutableStateFlow<List<String>>(emptyList())
     val followers: StateFlow<List<String>> = _followers.asStateFlow()
+
+    private var calibrationRun: CalibrationRun? = null
+    private var calibrationJob: Job? = null
+
+    private val _calibration = MutableStateFlow<CalibrationState?>(null)
+    val calibration: StateFlow<CalibrationState?> = _calibration.asStateFlow()
+
+    /** Addresses with a saved fit, so the survey can mark them. */
+    val calibratedAddresses: Set<String> get() = calibrations.addresses()
 
     private var peerLink: PeerLink? = null
     private var peerPosition: Pair<Double, Double>? = null
@@ -281,6 +295,12 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         val active = Tracker.create()
         tracker = active
 
+        // A fitted model beats the published priors by a wide margin, and the
+        // difference is multiplicative in distance rather than additive.
+        calibrations[address]?.let {
+            active.setPathLoss(it.txPower1m, it.exponent)
+        }
+
         scanJob = viewModelScope.launch {
             scanner.scan(targetAddress = address)
                 .catch { _error.value = it.message }
@@ -423,6 +443,98 @@ class HuntViewModel(app: Application) : AndroidViewModel(app) {
         val label = known.byAddress()[address]?.name ?: address
         startHunt(address, label)
         return true
+    }
+
+    // ---- Calibration -------------------------------------------------------
+
+    fun startCalibration(address: String, label: String) {
+        stopAll()
+        val run = CalibrationRun()
+        calibrationRun = run
+        _screen.value = Screen.Calibrate(address, label)
+        _calibration.value = CalibrationState.Waiting(run.currentDistance, 1, run.steps.size)
+    }
+
+    /**
+     * Begin collecting at the current distance.
+     *
+     * Readings are taken from advertisements rather than a connected link, for
+     * a reason worth stating: the model being fitted is the one the *hunt* will
+     * use, and the hunt reads advertisements. Calibrating against a quieter
+     * source would produce a model that is accurate for measurements the app
+     * never makes.
+     */
+    fun collectCalibrationStep() {
+        val run = calibrationRun ?: return
+        val screen = _screen.value as? Screen.Calibrate ?: return
+
+        _calibration.value = CalibrationState.Collecting(
+            run.currentDistance, run.stepIndex + 1, run.steps.size, 0, run.samplesPerStep,
+        )
+
+        calibrationJob?.cancel()
+        calibrationJob = viewModelScope.launch {
+            scanner.scan(targetAddress = screen.address)
+                .catch { _error.value = it.message }
+                .collect { advert ->
+                    if (!advert.address.equals(screen.address, ignoreCase = true)) return@collect
+                    run.record(advert.rssi.toDouble())
+                    _calibration.value = CalibrationState.Collecting(
+                        run.currentDistance,
+                        run.stepIndex + 1,
+                        run.steps.size,
+                        run.samplesInStep,
+                        run.samplesPerStep,
+                    )
+                    if (run.isStepComplete) {
+                        run.advance()
+                        calibrationJob?.cancel()
+                        _calibration.value = if (run.isComplete) {
+                            finishCalibration(run)
+                        } else {
+                            CalibrationState.Waiting(
+                                run.currentDistance, run.stepIndex + 1, run.steps.size,
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun finishCalibration(run: CalibrationRun): CalibrationState {
+        val fit = run.fit()
+        return if (fit == null) {
+            // The core refused it. Least squares always returns something, and
+            // in a reflective room that something is confidently wrong.
+            CalibrationState.Rejected(
+                "The readings did not fit a path-loss curve closely enough to " +
+                    "trust. That usually means reflections — try a corridor or a " +
+                    "larger room, with the device in clear air rather than on a " +
+                    "metal surface. The built-in model is being kept."
+            )
+        } else {
+            CalibrationState.Done(fit)
+        }
+    }
+
+    fun saveCalibration(calibration: Calibration) {
+        val screen = _screen.value as? Screen.Calibrate ?: return
+        calibrations.put(screen.address, calibration)
+        cancelCalibration()
+    }
+
+    fun retryCalibration() {
+        val screen = _screen.value as? Screen.Calibrate ?: return
+        startCalibration(screen.address, screen.label)
+    }
+
+    fun cancelCalibration() {
+        calibrationJob?.cancel()
+        calibrationJob = null
+        calibrationRun = null
+        _calibration.value = null
+        _screen.value = Screen.Survey
+        startSurvey()
     }
 
     fun reset() {

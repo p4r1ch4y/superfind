@@ -62,6 +62,26 @@ The APK is debug-signed, so Android warns on install — this is a private build
 not a store release. F-Droid and Play Store packaging comes later, and will need
 a real signing key held outside this repository.
 
+## Calibration
+
+The built-in priors — `-59 dBm` at 1 m, exponent `2.8` — come from published
+indoor studies, not from your hardware. Transmit power varies by more than 15 dB
+across devices, and because distance is recovered from `10^((tx - rssi) / 10n)`,
+that error is *multiplicative*: assume a device is 15 dB louder than it is and
+every distance reads about a third of the truth.
+
+**In the app**, hold a device in the list. **On the CLI**, `superfind --calibrate
+<name>`. Either way you are asked to place it at 1, 2, 4 and 8 m — geometric
+spacing, because path loss is linear in `log10(d)`, so doubling spaces the
+samples evenly along the axis the regression actually fits.
+
+**The fit is checked before it is kept.** Least squares always returns
+*something*; in a reflective corridor it will happily return an exponent of 1.1
+or a one-metre reference of -12 dBm, and the filter would then be confidently
+wrong rather than honestly uncertain. A physically implausible fit, or one whose
+residual exceeds 8 dB, is rejected and the priors are kept — and the app says so
+rather than dressing up a bad result. A tidy indoor fit lands around 3–5 dB.
+
 ## Hearing it instead of watching it
 
 Searching means looking at the room — under cushions, behind furniture — not at

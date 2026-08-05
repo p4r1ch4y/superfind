@@ -33,6 +33,10 @@ interface Tracker : AutoCloseable {
     fun setHeading(radians: Double, atSeconds: Double)
     fun step(lengthM: Double, atSeconds: Double)
     fun reset()
+
+    /** Replace the path-loss model, after a calibration walk. */
+    fun setPathLoss(txPower1m: Double, exponent: Double)
+
     fun snapshot(atSeconds: Double): Snapshot
 
     companion object {
@@ -86,6 +90,10 @@ private class NativeTracker(private val handle: Long) : Tracker {
     }
 
     override fun reset() = NativeCore.reset(handle)
+
+    override fun setPathLoss(txPower1m: Double, exponent: Double) {
+        NativeCore.setPathLoss(handle, txPower1m, exponent)
+    }
 
     override fun snapshot(atSeconds: Double): Snapshot =
         NativeCore.snapshot(handle, elapsed(atSeconds))
@@ -152,6 +160,9 @@ private class DegradedTracker : Tracker {
         steps++
         walked += lengthM
     }
+
+    // Without the filter there is no model to replace.
+    override fun setPathLoss(txPower1m: Double, exponent: Double) = Unit
 
     override fun reset() {
         history.clear()

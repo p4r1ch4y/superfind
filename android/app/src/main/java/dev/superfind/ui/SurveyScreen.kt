@@ -1,7 +1,8 @@
 package dev.superfind.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,10 @@ fun SurveyScreen(
     /** Addresses that have been with the user across places they have moved. */
     followers: List<String> = emptyList(),
     onSelect: (Sighting) -> Unit,
+    /** Long-press: fit a path-loss model to this particular device. */
+    onCalibrate: (Sighting) -> Unit = {},
+    /** Addresses that already have a saved fit. */
+    calibrated: Set<String> = emptySet(),
     onHuntAddress: (String) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -126,7 +131,12 @@ fun SurveyScreen(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sightings, key = { it.address }) { sighting ->
-                    SightingRow(sighting, onClick = { onSelect(sighting) })
+                    SightingRow(
+                        sighting = sighting,
+                        calibrated = sighting.address.uppercase() in calibrated,
+                        onClick = { onSelect(sighting) },
+                        onLongClick = { onCalibrate(sighting) },
+                    )
                 }
             }
         }
@@ -259,6 +269,13 @@ private fun CapabilityCard(instruction: String, limitations: List<String>) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Hold a device to calibrate it — a minute of measuring makes " +
+                    "its distances worth trusting.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             limitations.forEach {
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -271,13 +288,21 @@ private fun CapabilityCard(instruction: String, limitations: List<String>) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SightingRow(sighting: Sighting, onClick: () -> Unit) {
+private fun SightingRow(
+    sighting: Sighting,
+    calibrated: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     val band = sighting.rssi?.let { Proximity.of(it.toDouble()) }
     val tone = band?.let { proximityTone(it) } ?: SuperfindColors.Idle
 
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
@@ -320,6 +345,9 @@ private fun SightingRow(sighting: Sighting, onClick: () -> Unit) {
 
                 val notes = buildList {
                     if (sighting.bonded) add("paired")
+                    // Worth showing: a fitted model and a generic prior can
+                    // disagree about distance by a factor of three.
+                    if (calibrated) add("calibrated")
                     // Saying so is more useful than showing hex as if it were an
                     // identity: this address will be different in ten minutes.
                     if (sighting.randomisedAddress) add("randomised address")
@@ -391,6 +419,7 @@ private fun PreviewSurvey() = SuperfindTheme(darkTheme = true) {
         ),
         error = null,
         onSelect = {},
+        calibrated = setOf("AA:BB:CC:DD:EE:01"),
         onHuntAddress = { true },
     )
 }
