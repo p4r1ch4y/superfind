@@ -274,11 +274,21 @@ private fun EstimateBlock(
 
                 else -> {
                     val fix = snapshot.fix
-                    Line("Distance", "%.1f m".format(fix.distanceM))
-                    // The ellipse is reported as a span, which is far more
-                    // legible than a percentage: "give or take 4 m" is
-                    // actionable, "62% confident" is not.
-                    Line("Give or take", "%.1f m".format(fix.semiMajorM))
+                    // Before the user has moved, the posterior is an annulus
+                    // centred on them — and the mean of a ring is its centre, so
+                    // the distance comes out near zero however far away the
+                    // device actually is. The number is arithmetically right and
+                    // completely misleading, so it is withheld until the
+                    // uncertainty is smaller than the distance it qualifies.
+                    if (fix.semiMajorM >= fix.distanceM) {
+                        Line("Distance", "not yet — walk a few steps")
+                        Line("Uncertainty", "± %.0f m".format(fix.semiMajorM))
+                    } else {
+                        Line("Distance", "%.1f m".format(fix.distanceM))
+                        // Reported as a span rather than a percentage: "give or
+                        // take 4 m" is actionable, "62% confident" is not.
+                        Line("Give or take", "%.1f m".format(fix.semiMajorM))
+                    }
                 }
             }
 

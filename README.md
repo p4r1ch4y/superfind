@@ -1,10 +1,41 @@
-# superfind
+<div align="center">
 
-Find a device by its radio, across platforms.
+<img src="fastlane/metadata/android/en-US/images/icon.png" width="112" alt="Superfind icon">
 
-A platform-free sensor-fusion core in Rust, an Android app, and a Linux CLI that
-shares the same filter. Plan in [`docs/design.md`](docs/design.md); the radio and
-licensing groundwork in [`docs/platform-plan.md`](docs/platform-plan.md).
+# Superfind
+
+**Find a device by its radio.**
+
+A sensor-fusion core in Rust, an Android app, and a Linux CLI — all steering by
+the same filter.
+
+[![Tests](https://img.shields.io/badge/tests-105%20passing-success.svg)](#build-and-run)
+[![Android](https://img.shields.io/badge/Android-6.0%2B-3DDC84.svg)](android/)
+[![Rust core](https://img.shields.io/badge/core-Rust%2C%20zero%20deps-B7410E.svg)](crates/superfind-core)
+[![No INTERNET permission](https://img.shields.io/badge/INTERNET%20permission-none-success.svg)](#privacy)
+
+</div>
+
+---
+
+<div align="center">
+
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="185" alt="Nearby devices, named rather than listed as hex">&nbsp;
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="185" alt="The hunt radar; lit sectors are where you have already looked">&nbsp;
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="185" alt="Map view, showing the confidence ellipse rather than a dot">&nbsp;
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="185" alt="Hunting a device by typing its address">
+
+</div>
+
+Left to right: **the list**, where devices are described by what they broadcast
+rather than by a rotating hex address. **The radar**, where the lit sectors are
+the ones you have already swept — the gap *is* the instruction. **The map**,
+drawing the 95% confidence ellipse and never a dot; it is that large here
+precisely because the phone had not moved yet. **Find by address**, for when you
+know the MAC but the device is not advertising right now.
+
+Plan in [`docs/design.md`](docs/design.md); the radio and licensing groundwork in
+[`docs/platform-plan.md`](docs/platform-plan.md).
 
 ## Status
 
@@ -114,6 +145,16 @@ straight line cannot distinguish a target from its mirror image in that line —
 the ambiguity is geometric, and no amount of precision removes it. Twenty steps
 around a corner beat two hundred in a straight line. This is pinned down by a
 test: `a_straight_line_walk_leaves_a_mirror_ambiguity`.
+
+## Privacy
+
+The app requests no `INTERNET` permission, so nothing it hears can leave the
+phone. On Android 12 and later, Bluetooth scanning is declared
+`neverForLocation`, so your whereabouts are never requested either — the only
+thing being measured is signal strength.
+
+Rotating addresses belonging to other people's devices are held for the duration
+of a session and never written to disk.
 
 ## Repository layout
 

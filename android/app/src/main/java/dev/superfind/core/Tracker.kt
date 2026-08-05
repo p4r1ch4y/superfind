@@ -247,7 +247,11 @@ object Snapshots {
 
         val sectorCount = raw.getOrNull(cursor)?.toInt()?.coerceAtLeast(0) ?: 0
         cursor++
-        val sectors = (0 until sectorCount).mapNotNull { i ->
+        // `map`, never `mapNotNull`: an unswept sector must survive as a null in
+        // its own slot. Dropping it collapses the list, shifting every later
+        // sector into the wrong compass position and making unexplored arcs
+        // render as though they had been measured.
+        val sectors = (0 until sectorCount).map { i ->
             if (cursor + i < raw.size) opt(cursor + i) else null
         }
         cursor += sectorCount
