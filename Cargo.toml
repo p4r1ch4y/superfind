@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/superfind-core", "crates/superfind-cli", "crates/superfind-jni"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # 1.85 is the real floor: dependencies pull in the 2024 edition, which is not
 # stabilised before it.
